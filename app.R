@@ -2,7 +2,6 @@
 library(shiny)
 library(shinydashboard)
 library(ggplot2)
-# library(biomaRt)
 library(Morpho)
 library(rgl)
 library(geomorph)
@@ -21,28 +20,28 @@ library(dbplyr)
 
 #save(combined.markers, DO.go, giga.pca, mutant.db, mutant.lms, shape.mean, Y, DO.probs, file = "/data/MGP_data/offline_data.Rdata")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
-# mmusculusEnsembl <- makeTxDbFromBiomart(dataset="mmusculus_gene_ensembl")
-# saveDb(mmusculusEnsembl, file="/data/MGP_data/ensemble.sqlite")
-#old data: load("/data/MGP_data/data.Rdata")
 
 # #local dirs
-#  mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
-#  load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
-#  load("~/shiny/shinyapps/MGP/cached.results.Rdata")
-#  # load("~/shiny/shinyapps/MGP/new_mutants.Rdata")
-#  DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
+# mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
+# load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
+# load("~/shiny/shinyapps/MGP/cached.results.Rdata")
+# DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
 # # DO_probs_DB <- s3read_using(FUN = src_sqlite, object = "s3://mgpgenotypes/MGP_genotypes.sqlite") #src_sqlite("mgpgenotypes.s3.ca-central-1.amazonaws.com/MGP_genotypes.sqlite")
 
+#docker deployment dirs
+# mmusculusEnsembl <- loadDb(file="/srv/shiny-server/MGP/ensemble.sqlite")
+# # # load("/srv/shiny-server/offline_data.Rdata")
+# # # load("/srv/shiny-server/cached.results.Rdata")
+# # # mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
+# load("/srv/shiny-server/MGP/shiny_data.Rdata")
+# load("/srv/shiny-server/MGP/cached.results.Rdata")
+# DO_probs_DB <- src_sqlite("/srv/shiny-server/MGP/MGP_genotypes.sqlite")
 
-
-#deployment dirs
-mmusculusEnsembl <- loadDb(file="/srv/shiny-server/MGP/ensemble.sqlite")
-# # load("/srv/shiny-server/offline_data.Rdata")
-# # load("/srv/shiny-server/cached.results.Rdata")
-# # mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
-load("/srv/shiny-server/MGP/shiny_data.Rdata")
-load("/srv/shiny-server/MGP/cached.results.Rdata")
-DO_probs_DB <- src_sqlite("/srv/shiny-server/MGP/MGP_genotypes.sqlite")
+#genopheno deployment dirs
+# # # mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
+# load("/data/MGP_data/shiny_data.Rdata")
+# load("/data/MGP_data/cached.results.Rdata")
+# DO_probs_DB <- src_sqlite("/data/MGP_data/MGP_genotypes.sqlite")
 
 
 body <- dashboardBody(useShinyjs(),
@@ -137,15 +136,22 @@ body <- dashboardBody(useShinyjs(),
                                            width = 12,
                                            withSpinner(rglwidgetOutput("process_heatmap2", width = "95%"), type = 6, color = "#a6192e"))
                               ),
-                              tabPanel("Recent searches",
-                                       tableOutput("recents"),
-                                       plotOutput("process_correlations", width = "95%")
+                              tabPanel("Recent searches", br(),
+                                       box(title = tags$b("Previous process correlations"),
+                                           status = "warning",
+                                           solidHeader = F,
+                                           width = 12,
+                                           actionButton("redraw_cors", "Draw correlation heatmap"),
+                                           br(),
+                                           withSpinner(plotlyOutput("process_correlations", width = "95%"), type = 6, color = "#a6192e")),
+                                       br(),
+                                       tableOutput("recents")
                               ),
                               tabPanel("About this app",
                                        br(),
                                        p("This app is designed for a developmentally-focused genomic analysis. Instead of thinking about how all the variants in the genome contribute to the shape of the face, we focus on a more direct question; what do variants associated with a process I’m interested in do to the face? The figure below shows what’s going on under the hood to make that happen. When you select a process, this program looks up which genes are known to be associated with that process. We then look at the genomic markers in our sample to find the nearest ones. Those close markers will represent that gene’s effect. We put those variants together with 54 3-dimensional measurements of craniofacial shape and estimate how they covary. "),
                                        img(src='process_mgp_diagram 2.png', height = 610 , width = 247, ALIGN = "center", VSPACE = 30),
-                                       p("In the end you’ll see a plot that describes the relative strength of allelic effects on face shape in our sample. You can go on to compare mouse mutants from our collection of studies and collaborations over the years. The mutant database is always growing! We hope this program helps us better understand how genetic variation creates craniofacial variation. There are lots of contributing loci, and they often overlap in their effects. The dataset that’s driving all of this is a collection of 1145 mice from the Diversity outbred project at Jackson laboratories. Each of these mice have been genotyped at tens of thousands of loci, enabling us to do the marker selection with pretty good fidelity. If you’re interested in more details about this work, have a look at the paper.")
+                                       p("In the end you’ll see a plot that describes the relative strength of allelic effects on face shape in our sample. You can go on to compare mouse mutants from our collection of studies and collaborations over the years. The mutant database is always growing! We hope this program helps us better understand how genetic variation creates craniofacial variation. There are lots of contributing loci, and they often overlap in their effects. The dataset that’s driving all of this is a collection of 1145 mice from the Diversity outbred project at Jackson laboratories. Each of these mice have been genotyped at tens of thousands of loci, enabling us to do the marker selection with pretty good fidelity. If you’re interested in more details about this work, have a look at the ",  a("paper.", href="https://www.biorxiv.org/content/10.1101/2020.11.12.378513v2"), "If you'd like to see how this app was put together, here's a link to the", a(" Github repository.", href="https://github.com/J0vid/MGP_shiny"))
                               )
                   )
            )
@@ -264,11 +270,14 @@ server <- function(input, output){
   return(results)
   })
   
-  old_processes <- reactiveValues(x = list())
+  old_processes <- reactiveValues("Previous analyses" = list())
   
   observeEvent(input$update_process,
                {
                  old_processes$x <- c(old_processes$x, input$variables2)
+                 op.df <- as.data.frame(old_processes$x)
+                 names(op.df) <- "Previous analyses"
+                 old_processes$x <- op.df
                  enable("report")
                })
   
@@ -315,7 +324,7 @@ server <- function(input, output){
             legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9)))  
     
     
-    if(input$facet2 == "Messy, but informative"){
+    if(input$facet == "Messy, but informative"){
       p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
         theme(text = element_text(size=6),
@@ -327,7 +336,7 @@ server <- function(input, output){
         ylab("Genetic marker loading")
     }
     
-    if(input$facet2 == "Just the allele ranges"){
+    if(input$facet == "Just the allele ranges"){
       p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
         theme(text = element_text(size=4),
@@ -340,7 +349,7 @@ server <- function(input, output){
     }
     
     
-    if(input$facet2 == "Facet by founders"){
+    if(input$facet == "Facet by founders"){
       
       p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
@@ -671,21 +680,20 @@ server <- function(input, output){
   
   #meta-analysis of user selections####
   #convert cached.params from GO to process names
-  output$process_correlations <- renderPlot({
+  output$process_correlations <- renderPlotly({
     chosen.processes <- sample(1:nrow(cached.params), 10)
     tmp.proc.names <- rep(NA, 10)
     tmp.cor <- matrix(NA, nrow = 162, ncol = 10)
     for(i in 1:10){
-      tmp.cor[,i] <- cached.results[[chosen.processes[i]]][[1]][[1]]$mod$v[,1]
-      tmp.split <- strsplit(cached.params[i,1], split = "\\|")[[1]]
+      tmp.cor[,i] <- cached.results[[chosen.processes[i]]][[1]][[1]]$mod$V_super[,1]
+      tmp.split <- strsplit(cached.params[chosen.processes[i],1], split = "\\|")[[1]]
       name.buffer <- NULL
       for(j in 1 : length(tmp.split)) {
         name.buffer <- c(name.buffer, as.character(DO.go[DO.go[,2] == tmp.split[j],3]))
       }
       tmp.proc.names[i] <- paste(name.buffer, collapse = " + ") 
     }
-    
-    heatmap(1 - cor(tmp.cor), labRow = tmp.proc.names, symm = T)
+    heatmaply::heatmaply(cor(tmp.cor), labRow = tmp.proc.names, symm = T)
   })
 
   #report generator####
