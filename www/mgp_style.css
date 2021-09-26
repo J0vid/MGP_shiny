@@ -1,0 +1,114 @@
+  .content-wrapper {
+    background-color: white;
+  }
+
+  .content {
+    background-color: white;
+    color: black;
+  }
+                    
+  body {
+    background-color: white;
+    color: black;
+  }
+  
+  .skin-blue .main-header .navbar {
+    background-color: white;
+    border-bottom: 1px solid #ddd;
+  }
+
+  .skin-blue .main-header .logo {
+    background-color: #a6192e;
+    color: #fff;
+  }
+  
+  .skin-blue .main-header .logo:hover {
+    background-color: #901628;
+  }
+         
+  .col-sm-12{
+    max-width: 1200px;
+  }
+                   
+  hr {
+    border-top: 4px solid #a6192e;
+  }
+                   
+  .nav-tabs > li > a {
+    background-color: transparent;
+    color: black;
+  }
+                   
+  .nav-tabs > li > a:hover {
+    background-color: #a6192e;
+    border-color: transparent;
+    color: white;
+  }
+                   
+  .tabbable > .nav > li[class=active] > a {
+    background-color: #a6192e; 
+    color:white;
+    border-color: transparent;
+    }
+
+  .box-header {
+    color: black;
+    border-top-left-radius:5px;
+    border-top-right-radius:5px;
+  }
+
+  .box .box-warning{
+  background: rgba(245,245,245,.9);
+    border-bottom-color:#666666;
+    border-left-color:#666666;
+    border-right-color:#666666;
+    border-top-color:#a6192e;
+    box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.9);
+    border-top-left-radius:5px;
+    border-top-right-radius:5px;
+    max-width: 1400px;
+  }
+
+  .box .box-warning:hover {
+    box-shadow: 0 6px 12px 0 rgba(0, 0, 0, 0.9);
+    transition: box-shadow 0.3s ease-in-out;
+  }
+  
+  .irs-bar {
+    border-top: 1px solid #a6192e;
+    border-bottom: 1px solid #a6192e;
+    background: #a6192e;
+  }
+
+  .irs-from {
+    background: #a6192e;
+  }
+  
+    .irs-single {
+    background: #a6192e;
+    }
+  
+    .irs-bar-edge {
+      border: #a6192e;
+     border-top: 1px solid #a6192e;
+    border-bottom: 1px solid #a6192e;
+    background: #a6192e;
+  }
+  
+  .wrapper {
+  background-color: white;
+}
+
+.skin-blue .wrapper{
+  background-color: white;
+}
+  
+  .titleStyle { 
+            font-size: 20px;
+            line-height: 50px;
+            text-align: left;
+            font-family: Helvetica,Arial,sans-serif;
+            padding: 0 15px;
+            overflow: hidden;
+            color: black;
+            }
