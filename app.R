@@ -21,7 +21,7 @@ library(dbplyr)
 #save(combined.markers, DO.go, giga.pca, mutant.db, mutant.lms, shape.mean, Y, DO.probs, file = "/data/MGP_data/offline_data.Rdata")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
 
-# #local dirs
+#local dirs
 # mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
 # load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
 # load("~/shiny/shinyapps/MGP/cached.results.Rdata")
