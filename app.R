@@ -16,7 +16,9 @@ library(GenomicFeatures)
 library(org.Mm.eg.db)
 library(dplyr)
 library(dbplyr)
-
+library(future)
+library(promises)
+future::plan("multicore")
 
 #save(combined.markers, DO.go, giga.pca, mutant.db, mutant.lms, shape.mean, Y, DO.probs, file = "/data/MGP_data/offline_data.Rdata")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
@@ -81,6 +83,7 @@ body <- dashboardBody(useShinyjs(),
            conditionalPanel(condition = "input.tabs1 == 'Process MGP'",
                               column(width = 4,
                                    textInput("process", label = "Process", value = c("chondrocyte", "BMP", "fibroblast", "cohesin", "apoptosis")[sample(1:5,1)]),
+                                   # selectInput("process_test", label = "Process", multiple = T, choices = sort(DO.go[,3]), selected = c("chondrocyte differentiaion")[sample(1,1)]),
                                    uiOutput('variables')
                               ),
                               column(width = 4,
@@ -174,6 +177,7 @@ server <- function(input, output){
   
   #process filtering reactive####
   outVar <- reactive({
+    if(nchar(input$process) > 2){
     with.counts <- DO.go[grep(DO.go[,3], pattern = tolower(input$process)),3:4]
     with.counts[,1] <- as.character(with.counts[,1])
     with.counts[,2] <- as.character(with.counts[,2])
@@ -182,10 +186,11 @@ server <- function(input, output){
     with.counts.char <- as.character(apply(with.counts, 1, FUN = function(x){ paste0(x[1], " (", x[2], " genes)")}))
     
     return(list(process.ano, with.counts.char))
+  }
   })
   
   #slow down reactivity of text input
-  process.list <- debounce(outVar, 1500)
+  process.list <- debounce(outVar, 500)
   
   output$variables <- renderUI({
     selectInput('variables2', 'Process filter', process.list()[[2]], multiple = T)
@@ -193,81 +198,18 @@ server <- function(input, output){
   
   #main process reactive####
   process.svd <- eventReactive(input$update_process, {
-    #debug: process.svd <- reactive({
-    #selection.vector <- c('chondrocyte differentiation')
     
-    #instead of process.ano doing pattern matching, we need to use it to match GO terms precisely
+    #debug: process.svd <- reactive({
+    future::future({
+      print(input$variables2)
     selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
     
-    process.ano <- NULL
-    for(i in 1: length(selection.vector)) process.ano <- c(process.ano, as.character(DO.go[DO.go[,3] == selection.vector[i], 2]))
-    
-    #check the cache to see if the analysis has been called before. If so, just give the cached result
-    if(sum(cached.params[,1] == paste(process.ano, collapse = '|') & cached.params[,2] == input$lambda & input$pls_axis == 1) == 1){
-      results <- cached.results[[which(cached.params[,1] == paste(process.ano, collapse = '|') & cached.params[,2] == input$lambda)]][[1]]
-    } else {
-      
-      #offline method for getting gene metadata
-      #pull gene names from process.ano (go terms)
-      coi <- c("ENSEMBL", "SYMBOL")
-      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
-      
-      coi2 <- c("TXCHROM", "TXSTART", "TXEND")
-      symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
-      transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
-      
-      #symbol, chr, start, end
-      chr_name <- rep(NA,  nrow(go2symbol))
-      gene.start <- rep(NA,  nrow(go2symbol))
-      gene.end <- rep(NA,  nrow(go2symbol))
-      
-      for(i in 1:length(unique(symbol2info$GENEID))){
-        
-          tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
-        
-          chr_name[i] <- tmp.transcript$TXCHROM
-          gene.start[i] <- tmp.transcript$TXSTART
-          gene.end[i] <- tmp.transcript$TXEND
-        
-      }
-      
-      seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
-      seq.info[,2] <- as.character(seq.info[,2])
-      seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
-      
-      #get rid of weird chromosome names
-      if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
-      
-      gene.names <- seq.info[,1]
-      seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
-      
-      for(j in 1 : dim(seq.info)[1]){
-          tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
-          #for each gene, select the marker closest to the middle of the gene
-          seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
-      }
-      
-      #put together selected genotype data
-      probs.rows <- matrix(NA, nrow = nrow(Y), ncol = nrow(seq.indexes) * 8)
-      probrowseq <- seq(1, ncol(probs.rows) + 8, by = 8)
-      for(i in 1:nrow(seq.indexes)) probs.rows[, probrowseq[i]:(probrowseq[i+1] - 1) ] <- as.matrix(collect(tbl(DO_probs_DB, seq.indexes[i,2])))
-      
-      #fit lasso pls2B
-      pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = input$pls_axis, lambda = input$lambda)
-      
-      do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
-      pathway.loadings <- data.frame(gloadings = pls.svd$mod$u[[1]][, input$pls_axis], gnames = as.character(rep(seq.info[,1], each = 8)), founders = rep(do.names, nrow(seq.info)))
-      
-      #cache to pls list for new analyses if they've asked for the first axis only
-      if(input$pls_axis == 1){
-        results <- list(pls.svd, gene.names, seq.info, probs.rows, pathway.loadings)
-        cached.results[[length(cached.results) + 1]] <<- list(results)
-        cached.params <<- rbind(cached.params, c(paste(process.ano, collapse = '|'), input$lambda))
-        save(cached.results, cached.params, file = "~/shiny/shinyapps/MGP/cached.results.Rdata")
-      
-      } else { results <- list(pls.svd, gene.names, seq.info, probs.rows, pathway.loadings)}
-    }#end caching if
-  return(results)
+    raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/mgp_loadings"),
+                             query = list(GO.term = selection.vector, lambda = input$lambda),
+                             encode = "json")
+    jsonlite::fromJSON(httr::content(raw_api_res, "text"))
+    }) 
+    # print(jsonlite::fromJSON(httr::content(raw_api_res, "text")))
   })
   
   old_processes <- reactiveValues("Previous analyses" = list())
@@ -288,43 +230,38 @@ server <- function(input, output){
   
   #effect size plot Process MGP####
   output$process_effect_size <- renderPlotly({
-    tmp.reactive <- process.svd()
-    reactive.svd <- tmp.reactive[[1]]$mod$u[[1]]
-    gene.names <- tmp.reactive[[2]]
-    seq.info <- tmp.reactive[[3]]
     
-    #now we should be able to take pls.svd directly and maybe label them by founder in a new column, then barplot by family, by gene
     do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
     do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
-    print(dim(reactive.svd))
-    pathway.loadings <- data.frame(gloadings = reactive.svd[,input$pls_axis], gnames = as.character(rep(seq.info[,1], each = 8)), founders = rep(do.names, nrow(seq.info)))
+  
+    process.svd() %...>% `[[`("loadings") %...>% print()
 
-    p <-  ggplot() +
-      geom_bar(data = pathway.loadings, 
-               aes(x = gnames, y = gloadings), 
-               stat = "identity", 
-               width = .75, 
+    process.svd() %...>% `[[`("loadings") %...>% {
+
+    if(input$facet == "Simple"){ ggplot() +
+      geom_bar(data = .,
+               aes(x = gnames, y = gloadings),
+               stat = "identity",
+               width = .75,
                position=position_dodge()) +
-      geom_point(data = pathway.loadings,
+      geom_point(data = .,
                  aes(x = gnames, y = gloadings, color = founders),
                  shape = "-",
                  size = 1) +
-      scale_color_manual(values=do.colors, 
+      scale_color_manual(values=do.colors,
                          guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 1))) +
       xlab("Gene") +
       ylab("Genetic marker loading") +
-      theme(text = element_text(size=6), 
+      theme(text = element_text(size=6),
             axis.text.x = element_text(angle = 75, hjust = 1),
             axis.title.x = element_text(margin = margin(t = 20)),
             axis.text = element_text(angle = 55, hjust = 1, size = 12),
             axis.title = element_text(size = 12, face = "bold"),
-            legend.text = element_text(size = 8), 
+            legend.text = element_text(size = 8),
             legend.title = element_text(size = 8, face = "bold", hjust = .5),
             plot.background = element_rect(fill = rgb(245/255, 245/255, 245/255, .9), colour = rgb(245/255, 245/255, 245/255, .9)),
-            legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9)))  
-    
-    
-    if(input$facet == "Messy, but informative"){
+            legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9)))
+    } else if(input$facet == "Messy, but informative"){
       p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
         theme(text = element_text(size=6),
@@ -334,9 +271,7 @@ server <- function(input, output){
         scale_fill_manual(values=do.colors) +
         xlab("Gene") +
         ylab("Genetic marker loading")
-    }
-    
-    if(input$facet == "Just the allele ranges"){
+    } else if(input$facet == "Just the allele ranges"){
       p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
         theme(text = element_text(size=4),
@@ -346,10 +281,7 @@ server <- function(input, output){
         scale_fill_manual(values=do.colors) +
         xlab("Gene") +
         ylab("Genetic marker loading")
-    }
-    
-    
-    if(input$facet == "Facet by founders"){
+    } else if(input$facet == "Facet by founders"){
       
       p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
@@ -360,57 +292,50 @@ server <- function(input, output){
         xlab("") +
         ylab("Genetic coefficient") +
         facet_wrap( ~ founders, nrow = 3)
-    }
-    
-    ggplotly(p +
+    } %...>% ggplotly(. +
                theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7),
                      axis.text.y = element_text(size = 8),
                      axis.title = element_text(size = 12, face = "bold")),
-             legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9))) %>% layout(
+             legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9))) %...>% layout(
                        margin = list(b = 100, l = 50) # to fully display the x and y axis labels
                      )
+    }
   })
+  
   
   #process MGP phenotypic projection####
   pheno.proj.process <- reactive({
-    tmp.reactive <- process.svd()
-    probs.rows <- tmp.reactive[[4]]
-    
-    snp.dim <- input$pls_axis
-    
-    #calculate projection
-    proj.coords.a1 <- row2array3d(predict(tmp.reactive[[1]], probs.rows[c(which.min(tmp.reactive[[1]]$mod$ts[[snp.dim]][, 1]), which.max(tmp.reactive[[1]]$mod$ts[[snp.dim]][,1])),])$y, Nlandmarks = 54)
-    proj.coords.a2 <- proj.coords.a1[,,2]
-    proj.coords.a1 <- proj.coords.a1[,,1]
-    
+    proj.coords.a2 <- process.svd()[[2]]
+    proj.coords.a1 <- process.svd()[[3]]
+
     return(list(proj.coords.a1, proj.coords.a2))
   })
-  
+
   #mutant registration reactive####
   mutant.comparison <- reactive({
-    
+
     tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == input$mutant,])), 54, 3))$coords
     #debug: tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == "Alk2",])), 54, 3))$coords
     do.mean <- array.mean(tmp.mutant.registration[,,1:nrow(Y)])
     mutant.mean <- array.mean(tmp.mutant.registration[,,-(1:nrow(Y))])
     return(list(do.mean, mutant.mean, tmp.mutant.registration))
   })
-  
+
   output$process_heatmap <- renderRglwidget({
     print(input$mutant)
     do.mean <- matrix(colMeans(Y), nrow = 54, ncol = 3, byrow = T)
 
     par3d(zoom = .65)
     aspect3d("iso")
-    
+
     #vectors from DO mean to mutant
     shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
     spheres3d(pheno.proj.process()[[1]], radius = .003, color = 1)
     bg3d(rgb(245/255,245/255,245/255, .9))
-    
-    
+
+
     if(input$mutant != " "){
-      
+
       if(input$mutant != "Whole genome"){
         print(mutant.comparison())
         do.mean <- mutant.comparison()[[1]]
@@ -423,226 +348,226 @@ server <- function(input, output){
                    col = 2)
         # for(i in 1:54) arrow3d(do.mean[i,] - (mutant.mean[i,] - do.mean[i,]), mutant.mean[i,], type = "lines", col = "red", barblen = 0.005, lwd = 2)
       }
-      
+
       if(input$mutant == "Whole genome"){
         #for(i in 1:54) arrow3d(proj.pca1[i,], proj.pca2[i,], type = "lines", col = "red", barblen = 0, lwd = 2)
       }
     }
-    
+
     # for(i in 1:54) arrow3d(pheno.proj.process()[[2]][i,], pheno.proj.process()[[1]][i,] + (pheno.proj.process()[[1]][i,] - pheno.proj.process()[[2]][i,]) * (input$mag - 1), type = "lines", col = "black", barblen = 0.005, lwd = 3)
     segments3d(x = (rbind(as.vector(pheno.proj.process()[[1]][,1]), as.vector((pheno.proj.process()[[2]] + (pheno.proj.process()[[2]] - pheno.proj.process()[[1]]) * (input$mag - 1))[,1]))),
                y = (rbind(as.vector(pheno.proj.process()[[1]][,2]), as.vector((pheno.proj.process()[[2]] + (pheno.proj.process()[[2]] - pheno.proj.process()[[1]]) * (input$mag - 1))[,2]))),
                z = (rbind(as.vector(pheno.proj.process()[[1]][,3]), as.vector((pheno.proj.process()[[2]] + (pheno.proj.process()[[2]] - pheno.proj.process()[[1]]) * (input$mag - 1))[,3]))),
                lwd = 3)
-    
+
     rglwidget()
-    
-  })
-  
-  #custom MGP gene list code####
-  custom.process.svd <- eventReactive(input$update_process2, {
-    # process.svd <- reactive({
-    #instead of process.ano doing pattern matching, we need to use it to match GO terms precisely
-    # selection.vector <- c("Bmp7, Bmp2, Bmp4, Ankrd11")
-    selection.vector <- as.character(strsplit(input$custom_process, ", ")[[1]])
-    print(str(selection.vector))
 
-    coi <- c("ENSEMBL", "SYMBOL")
-    gene2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = selection.vector, columns = coi, keytype = "SYMBOL")))
-      
-    coi2 <- c("TXCHROM", "TXSTART", "TXEND")
-    symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = gene2symbol[,2], columns = coi2, keytype="GENEID")
-    transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
-      
-    chr_name <- rep(NA,  length(unique(symbol2info$GENEID)))
-    gene.start <- rep(NA,  length(unique(symbol2info$GENEID)))
-    gene.end <- rep(NA,  length(unique(symbol2info$GENEID)))
-      
-    for(i in 1:length(unique(symbol2info$GENEID))){
-        tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
-        chr_name[i] <- tmp.transcript$TXCHROM
-        gene.start[i] <- tmp.transcript$TXSTART
-        gene.end[i] <- tmp.transcript$TXEND
-      }
-      
-    seq.info <- data.frame(mgi_symbol = gene2symbol[match(unique(symbol2info$GENEID), gene2symbol$ENSEMBL),1], chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
-    seq.info[,2] <- as.character(seq.info[,2])
-    seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
-    gene.names <- seq.info[,1]
-      
-    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
-      
-      seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
-      #we have seq.info which gives us a gene name and its location on the chromosome
-      
-      for(j in 1 : dim(seq.info)[1]){
-        tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
-        #for each gene, select the marker closest to the middle of the gene
-        seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
-    }
+  })
 
-    #put together selected genotype data
-    probs.rows <- matrix(NA, nrow = nrow(Y), ncol = nrow(seq.indexes) * 8)
-    probrowseq <- seq(1, ncol(probs.rows) + 8, by = 8)
-    for(i in 1:nrow(seq.indexes)) probs.rows[, probrowseq[i]:(probrowseq[i+1] - 1) ] <- as.matrix(collect(tbl(DO_probs_DB, seq.indexes[i,2])))
-    pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = input$pls_axis2, lambda = input$lambda2)
-    results <- list(pls.svd, gene.names, seq.info, probs.rows)
-    print(seq.info)
-    return(results)
-  })
-  
-  #Custom process effect size plot####
-  output$process_effect_size2 <- renderPlotly({
-    tmp.reactive <- custom.process.svd()
-    reactive.svd <- tmp.reactive[[1]]$mod$u[[1]]
-    gene.names <- tmp.reactive[[2]]
-    seq.info <- tmp.reactive[[3]]
-    
-    #now we should be able to take pls.svd directly and maybe label them by founder in a new column, then barplot by family, by gene
-    do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
-    do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
-    
-    pathway.loadings <- data.frame(gloadings = reactive.svd[,input$pls_axis2], gnames = as.character(rep(seq.info[,1], each = 8)), founders = rep(do.names, nrow(seq.info)))
-
-    p <-  ggplot() +
-      geom_bar(data = pathway.loadings, 
-               aes(x = gnames, y = gloadings), 
-               stat = "identity", 
-               width = .75, 
-               position=position_dodge()) +
-      geom_point(data = pathway.loadings,
-                 aes(x = gnames, y = gloadings, color = founders),
-                 shape = "-",
-                 size = 1) +
-      scale_color_manual(values=do.colors, 
-                         guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 1))) +
-      xlab("Gene") +
-      ylab("Genetic marker loading") +
-      theme(text = element_text(size=6), 
-            axis.text.x = element_text(angle = 75, hjust = 1),
-            axis.title.x = element_text(margin = margin(t = 20)),
-            axis.text = element_text(angle = 55, hjust = 1, size = 12),
-            axis.title = element_text(size = 12, face = "bold"),
-            legend.text = element_text(size = 8), 
-            legend.title = element_text(size = 8, face = "bold", hjust = .5),
-            plot.background = element_rect(fill = rgb(245/255, 245/255, 245/255, .9), colour = rgb(245/255, 245/255, 245/255, .9)),
-            legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9)))  
-    
-    
-    if(input$facet2 == "Messy, but informative"){
-      p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
-        geom_bar(stat = "identity", width = .75, position=position_dodge()) +
-        theme(text = element_text(size=6),
-              axis.text.x = element_text(angle = 70, hjust = 1),
-              axis.text.y = element_text(size = .2),
-              axis.title.x = element_text(margin = margin(t = 20))) +
-        scale_fill_manual(values=do.colors) +
-        xlab("Gene") +
-        ylab("Genetic marker loading")
-    }
-    
-    if(input$facet2 == "Just the allele ranges"){
-      p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings)) +
-        geom_bar(stat = "identity", width = .75, position=position_dodge()) +
-        theme(text = element_text(size=4),
-              axis.text.x = element_text(angle = 75, hjust = 1, size = .5),
-              axis.text.y = element_text(size = .4),
-              axis.title.x = element_text(margin = margin(t = 20))) +
-        scale_fill_manual(values=do.colors) +
-        xlab("Gene") +
-        ylab("Genetic marker loading")
-    }
-    
-    
-    if(input$facet2 == "Facet by founders"){
-      
-      p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
-        geom_bar(stat = "identity", width = .75, position=position_dodge()) +
-        theme(text = element_text(size=3),
-              axis.text.x = element_text(angle = 70, hjust = 1),
-              axis.title.x = element_text(margin = margin(t = 20))) +
-        scale_fill_manual(values=do.colors) +
-        xlab("") +
-        ylab("Genetic coefficient") +
-        facet_wrap( ~ founders, nrow = 3)
-    }
-    
-    ggplotly(p +
-               theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7),
-                     axis.text.y = element_text(size = 8),
-                     axis.title = element_text(size = 12, face = "bold")),
-             legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9))) %>% layout(
-               margin = list(b = 100, l = 50) # to fully display the x and y axis labels
-             )
-  })
-  
-  #custom process phenotypic projection####
-  custom.pheno.proj.process <- reactive({
-    tmp.reactive <- custom.process.svd()
-    probs.rows <- tmp.reactive[[4]]
-    snp.dim <- input$pls_axis2
-    #calculate projection
-    proj.coords.a1 <- row2array3d(predict(tmp.reactive[[1]], probs.rows[c(which.min(tmp.reactive[[1]]$mod$ts[[snp.dim]][,1]), which.max(tmp.reactive[[1]]$mod$ts[[snp.dim]][,1])),])$y, Nlandmarks = 54)
-    proj.coords.a2 <- proj.coords.a1[,,2]
-    proj.coords.a1 <- proj.coords.a1[,,1]
-    
-    return(list(proj.coords.a1, proj.coords.a2))
-  })
-  
-  #custom mutant registration reactive####
-  custom.mutant.comparison <- reactive({
-    
-    tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == input$mutant2,])), 54, 3))$coords
-    #debug: tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == "Alk2",])), 54, 3))$coords
-    do.mean <- array.mean(tmp.mutant.registration[,,1:nrow(Y)])
-    mutant.mean <- array.mean(tmp.mutant.registration[,,-(1:nrow(Y))])
-    return(list(do.mean, mutant.mean, tmp.mutant.registration))
-  })
-  
-  #render custom process phenotype####
-  output$process_heatmap2 <- renderRglwidget({
-    
-    do.mean <- matrix(colMeans(Y), nrow = 54, ncol = 3, byrow = T)
-    
-    par3d(zoom = .65)
-    aspect3d("iso")
-    
-    #vectors from DO mean to mutant
-    shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
-    spheres3d(custom.pheno.proj.process()[[1]], radius = .003, color = 1)
-    bg3d(rgb(245/255,245/255,245/255, .9))
-    
-    # shape.warp <- plot3d(do.mean, typ = "s", radius = .001, col = adjustcolor("red", .3), aspect = "iso")
-    # shade3d(shape.mean$mesh)
-    # rglwidget()
-    
-    if(input$mutant2 != " "){
-      
-      if(input$mutant2 != "Whole genome"){
-        do.mean <- custom.mutant.comparison()[[1]]
-        mutant.mean <- custom.mutant.comparison()[[2]]
-        spheres3d(do.mean, radius = .002, color = 2)
-        segments3d(x = (rbind(as.vector(do.mean[,1]), as.vector((mutant.mean + (mutant.mean - do.mean) * (input$mag2 - 1))[,1]))),
-                   y = (rbind(as.vector(do.mean[,2]), as.vector((mutant.mean + (mutant.mean - do.mean) * (input$mag2 - 1))[,2]))),
-                   z = (rbind(as.vector(do.mean[,3]), as.vector((mutant.mean + (mutant.mean - do.mean) * (input$mag2 - 1))[,3]))),
-                   lwd = 3,
-                   col = 2)
-      }
-      
-      if(input$mutant2 == "Whole genome"){
-        #for(i in 1:54) arrow3d(proj.pca1[i,], proj.pca2[i,], type = "lines", col = "red", barblen = 0, lwd = 2)
-      }
-    }
-    
-    # for(i in 1:54) arrow3d(custom.custom.pheno.proj.process()[[2]][i,], custom.custom.pheno.proj.process()[[1]][i,] + (custom.custom.pheno.proj.process()[[1]][i,] - custom.custom.pheno.proj.process()[[2]][i,]) * (input$mag - 1), type = "lines", col = "black", barblen = 0.005, lwd = 3)
-    segments3d(x = (rbind(as.vector(custom.pheno.proj.process()[[1]][,1]), as.vector((custom.pheno.proj.process()[[2]] + (custom.pheno.proj.process()[[2]] - custom.pheno.proj.process()[[1]]) * (input$mag2 - 1))[,1]))),
-               y = (rbind(as.vector(custom.pheno.proj.process()[[1]][,2]), as.vector((custom.pheno.proj.process()[[2]] + (custom.pheno.proj.process()[[2]] - custom.pheno.proj.process()[[1]]) * (input$mag2 - 1))[,2]))),
-               z = (rbind(as.vector(custom.pheno.proj.process()[[1]][,3]), as.vector((custom.pheno.proj.process()[[2]] + (custom.pheno.proj.process()[[2]] - custom.pheno.proj.process()[[1]]) * (input$mag2 - 1))[,3]))),
-               lwd = 3)
-    
-    rglwidget()
-    
-  })
+  # #custom MGP gene list code####
+  # custom.process.svd <- eventReactive(input$update_process2, {
+  #   # process.svd <- reactive({
+  #   #instead of process.ano doing pattern matching, we need to use it to match GO terms precisely
+  #   # selection.vector <- c("Bmp7, Bmp2, Bmp4, Ankrd11")
+  #   selection.vector <- as.character(strsplit(input$custom_process, ", ")[[1]])
+  #   print(str(selection.vector))
+  # 
+  #   coi <- c("ENSEMBL", "SYMBOL")
+  #   gene2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = selection.vector, columns = coi, keytype = "SYMBOL")))
+  #     
+  #   coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+  #   symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = gene2symbol[,2], columns = coi2, keytype="GENEID")
+  #   transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+  #     
+  #   chr_name <- rep(NA,  length(unique(symbol2info$GENEID)))
+  #   gene.start <- rep(NA,  length(unique(symbol2info$GENEID)))
+  #   gene.end <- rep(NA,  length(unique(symbol2info$GENEID)))
+  #     
+  #   for(i in 1:length(unique(symbol2info$GENEID))){
+  #       tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+  #       chr_name[i] <- tmp.transcript$TXCHROM
+  #       gene.start[i] <- tmp.transcript$TXSTART
+  #       gene.end[i] <- tmp.transcript$TXEND
+  #     }
+  #     
+  #   seq.info <- data.frame(mgi_symbol = gene2symbol[match(unique(symbol2info$GENEID), gene2symbol$ENSEMBL),1], chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+  #   seq.info[,2] <- as.character(seq.info[,2])
+  #   seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+  #   gene.names <- seq.info[,1]
+  #     
+  #   if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+  #     
+  #     seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+  #     #we have seq.info which gives us a gene name and its location on the chromosome
+  #     
+  #     for(j in 1 : dim(seq.info)[1]){
+  #       tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+  #       #for each gene, select the marker closest to the middle of the gene
+  #       seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+  #   }
+  # 
+  #   #put together selected genotype data
+  #   probs.rows <- matrix(NA, nrow = nrow(Y), ncol = nrow(seq.indexes) * 8)
+  #   probrowseq <- seq(1, ncol(probs.rows) + 8, by = 8)
+  #   for(i in 1:nrow(seq.indexes)) probs.rows[, probrowseq[i]:(probrowseq[i+1] - 1) ] <- as.matrix(collect(tbl(DO_probs_DB, seq.indexes[i,2])))
+  #   pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = input$pls_axis2, lambda = input$lambda2)
+  #   results <- list(pls.svd, gene.names, seq.info, probs.rows)
+  #   print(seq.info)
+  #   return(results)
+  # })
+  # 
+  # #Custom process effect size plot####
+  # output$process_effect_size2 <- renderPlotly({
+  #   tmp.reactive <- custom.process.svd()
+  #   reactive.svd <- tmp.reactive[[1]]$mod$u[[1]]
+  #   gene.names <- tmp.reactive[[2]]
+  #   seq.info <- tmp.reactive[[3]]
+  #   
+  #   #now we should be able to take pls.svd directly and maybe label them by founder in a new column, then barplot by family, by gene
+  #   do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+  #   do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
+  #   
+  #   pathway.loadings <- data.frame(gloadings = reactive.svd[,input$pls_axis2], gnames = as.character(rep(seq.info[,1], each = 8)), founders = rep(do.names, nrow(seq.info)))
+  # 
+  #   p <-  ggplot() +
+  #     geom_bar(data = pathway.loadings, 
+  #              aes(x = gnames, y = gloadings), 
+  #              stat = "identity", 
+  #              width = .75, 
+  #              position=position_dodge()) +
+  #     geom_point(data = pathway.loadings,
+  #                aes(x = gnames, y = gloadings, color = founders),
+  #                shape = "-",
+  #                size = 1) +
+  #     scale_color_manual(values=do.colors, 
+  #                        guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 1))) +
+  #     xlab("Gene") +
+  #     ylab("Genetic marker loading") +
+  #     theme(text = element_text(size=6), 
+  #           axis.text.x = element_text(angle = 75, hjust = 1),
+  #           axis.title.x = element_text(margin = margin(t = 20)),
+  #           axis.text = element_text(angle = 55, hjust = 1, size = 12),
+  #           axis.title = element_text(size = 12, face = "bold"),
+  #           legend.text = element_text(size = 8), 
+  #           legend.title = element_text(size = 8, face = "bold", hjust = .5),
+  #           plot.background = element_rect(fill = rgb(245/255, 245/255, 245/255, .9), colour = rgb(245/255, 245/255, 245/255, .9)),
+  #           legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9)))  
+  #   
+  #   
+  #   if(input$facet2 == "Messy, but informative"){
+  #     p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
+  #       geom_bar(stat = "identity", width = .75, position=position_dodge()) +
+  #       theme(text = element_text(size=6),
+  #             axis.text.x = element_text(angle = 70, hjust = 1),
+  #             axis.text.y = element_text(size = .2),
+  #             axis.title.x = element_text(margin = margin(t = 20))) +
+  #       scale_fill_manual(values=do.colors) +
+  #       xlab("Gene") +
+  #       ylab("Genetic marker loading")
+  #   }
+  #   
+  #   if(input$facet2 == "Just the allele ranges"){
+  #     p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings)) +
+  #       geom_bar(stat = "identity", width = .75, position=position_dodge()) +
+  #       theme(text = element_text(size=4),
+  #             axis.text.x = element_text(angle = 75, hjust = 1, size = .5),
+  #             axis.text.y = element_text(size = .4),
+  #             axis.title.x = element_text(margin = margin(t = 20))) +
+  #       scale_fill_manual(values=do.colors) +
+  #       xlab("Gene") +
+  #       ylab("Genetic marker loading")
+  #   }
+  #   
+  #   
+  #   if(input$facet2 == "Facet by founders"){
+  #     
+  #     p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
+  #       geom_bar(stat = "identity", width = .75, position=position_dodge()) +
+  #       theme(text = element_text(size=3),
+  #             axis.text.x = element_text(angle = 70, hjust = 1),
+  #             axis.title.x = element_text(margin = margin(t = 20))) +
+  #       scale_fill_manual(values=do.colors) +
+  #       xlab("") +
+  #       ylab("Genetic coefficient") +
+  #       facet_wrap( ~ founders, nrow = 3)
+  #   }
+  #   
+  #   ggplotly(p +
+  #              theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7),
+  #                    axis.text.y = element_text(size = 8),
+  #                    axis.title = element_text(size = 12, face = "bold")),
+  #            legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9))) %>% layout(
+  #              margin = list(b = 100, l = 50) # to fully display the x and y axis labels
+  #            )
+  # })
+  # 
+  # #custom process phenotypic projection####
+  # custom.pheno.proj.process <- reactive({
+  #   tmp.reactive <- custom.process.svd()
+  #   probs.rows <- tmp.reactive[[4]]
+  #   snp.dim <- input$pls_axis2
+  #   #calculate projection
+  #   proj.coords.a1 <- row2array3d(predict(tmp.reactive[[1]], probs.rows[c(which.min(tmp.reactive[[1]]$mod$ts[[snp.dim]][,1]), which.max(tmp.reactive[[1]]$mod$ts[[snp.dim]][,1])),])$y, Nlandmarks = 54)
+  #   proj.coords.a2 <- proj.coords.a1[,,2]
+  #   proj.coords.a1 <- proj.coords.a1[,,1]
+  #   
+  #   return(list(proj.coords.a1, proj.coords.a2))
+  # })
+  # 
+  # #custom mutant registration reactive####
+  # custom.mutant.comparison <- reactive({
+  #   
+  #   tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == input$mutant2,])), 54, 3))$coords
+  #   #debug: tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == "Alk2",])), 54, 3))$coords
+  #   do.mean <- array.mean(tmp.mutant.registration[,,1:nrow(Y)])
+  #   mutant.mean <- array.mean(tmp.mutant.registration[,,-(1:nrow(Y))])
+  #   return(list(do.mean, mutant.mean, tmp.mutant.registration))
+  # })
+  # 
+  # #render custom process phenotype####
+  # output$process_heatmap2 <- renderRglwidget({
+  #   
+  #   do.mean <- matrix(colMeans(Y), nrow = 54, ncol = 3, byrow = T)
+  #   
+  #   par3d(zoom = .65)
+  #   aspect3d("iso")
+  #   
+  #   #vectors from DO mean to mutant
+  #   shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
+  #   spheres3d(custom.pheno.proj.process()[[1]], radius = .003, color = 1)
+  #   bg3d(rgb(245/255,245/255,245/255, .9))
+  #   
+  #   # shape.warp <- plot3d(do.mean, typ = "s", radius = .001, col = adjustcolor("red", .3), aspect = "iso")
+  #   # shade3d(shape.mean$mesh)
+  #   # rglwidget()
+  #   
+  #   if(input$mutant2 != " "){
+  #     
+  #     if(input$mutant2 != "Whole genome"){
+  #       do.mean <- custom.mutant.comparison()[[1]]
+  #       mutant.mean <- custom.mutant.comparison()[[2]]
+  #       spheres3d(do.mean, radius = .002, color = 2)
+  #       segments3d(x = (rbind(as.vector(do.mean[,1]), as.vector((mutant.mean + (mutant.mean - do.mean) * (input$mag2 - 1))[,1]))),
+  #                  y = (rbind(as.vector(do.mean[,2]), as.vector((mutant.mean + (mutant.mean - do.mean) * (input$mag2 - 1))[,2]))),
+  #                  z = (rbind(as.vector(do.mean[,3]), as.vector((mutant.mean + (mutant.mean - do.mean) * (input$mag2 - 1))[,3]))),
+  #                  lwd = 3,
+  #                  col = 2)
+  #     }
+  #     
+  #     if(input$mutant2 == "Whole genome"){
+  #       #for(i in 1:54) arrow3d(proj.pca1[i,], proj.pca2[i,], type = "lines", col = "red", barblen = 0, lwd = 2)
+  #     }
+  #   }
+  #   
+  #   # for(i in 1:54) arrow3d(custom.custom.pheno.proj.process()[[2]][i,], custom.custom.pheno.proj.process()[[1]][i,] + (custom.custom.pheno.proj.process()[[1]][i,] - custom.custom.pheno.proj.process()[[2]][i,]) * (input$mag - 1), type = "lines", col = "black", barblen = 0.005, lwd = 3)
+  #   segments3d(x = (rbind(as.vector(custom.pheno.proj.process()[[1]][,1]), as.vector((custom.pheno.proj.process()[[2]] + (custom.pheno.proj.process()[[2]] - custom.pheno.proj.process()[[1]]) * (input$mag2 - 1))[,1]))),
+  #              y = (rbind(as.vector(custom.pheno.proj.process()[[1]][,2]), as.vector((custom.pheno.proj.process()[[2]] + (custom.pheno.proj.process()[[2]] - custom.pheno.proj.process()[[1]]) * (input$mag2 - 1))[,2]))),
+  #              z = (rbind(as.vector(custom.pheno.proj.process()[[1]][,3]), as.vector((custom.pheno.proj.process()[[2]] + (custom.pheno.proj.process()[[2]] - custom.pheno.proj.process()[[1]]) * (input$mag2 - 1))[,3]))),
+  #              lwd = 3)
+  #   
+  #   rglwidget()
+  #   
+  # })
   
   #dynamic title needs to have a reactive expression that looks for changes in process and mutant!
   title.change <- reactive({
