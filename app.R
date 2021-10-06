@@ -24,8 +24,8 @@ future::plan("multicore")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
 
 #local dirs
-# mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
-# load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
+mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
+load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
 # load("~/shiny/shinyapps/MGP/cached.results.Rdata")
 # DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
 # # DO_probs_DB <- s3read_using(FUN = src_sqlite, object = "s3://mgpgenotypes/MGP_genotypes.sqlite") #src_sqlite("mgpgenotypes.s3.ca-central-1.amazonaws.com/MGP_genotypes.sqlite")
@@ -204,12 +204,11 @@ server <- function(input, output){
       print(input$variables2)
     selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
     
-    raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/mgp_loadings"),
+    raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/mgp"),
                              query = list(GO.term = selection.vector, lambda = input$lambda),
                              encode = "json")
     jsonlite::fromJSON(httr::content(raw_api_res, "text"))
     }) 
-    # print(jsonlite::fromJSON(httr::content(raw_api_res, "text")))
   })
   
   old_processes <- reactiveValues("Previous analyses" = list())
@@ -223,7 +222,6 @@ server <- function(input, output){
                  enable("report")
                })
   
-  
   output$recents <- renderTable({
     old_processes$x
   })
@@ -234,9 +232,8 @@ server <- function(input, output){
     do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
     do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
   
-    process.svd() %...>% `[[`("loadings") %...>% print()
-
-    process.svd() %...>% `[[`("loadings") %...>% {
+    process.svd() %...>% `[[`("loadings") %...>% 
+      {
 
     if(input$facet == "Simple"){ ggplot() +
       geom_bar(data = .,
@@ -262,7 +259,7 @@ server <- function(input, output){
             plot.background = element_rect(fill = rgb(245/255, 245/255, 245/255, .9), colour = rgb(245/255, 245/255, 245/255, .9)),
             legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9)))
     } else if(input$facet == "Messy, but informative"){
-      p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
+      ggplot(data = ., aes(x = gnames, y = gloadings, fill = founders)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
         theme(text = element_text(size=6),
               axis.text.x = element_text(angle = 70, hjust = 1),
@@ -272,7 +269,7 @@ server <- function(input, output){
         xlab("Gene") +
         ylab("Genetic marker loading")
     } else if(input$facet == "Just the allele ranges"){
-      p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings)) +
+      ggplot(data = ., aes(x = gnames, y = gloadings)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
         theme(text = element_text(size=4),
               axis.text.x = element_text(angle = 75, hjust = 1, size = .5),
@@ -282,8 +279,7 @@ server <- function(input, output){
         xlab("Gene") +
         ylab("Genetic marker loading")
     } else if(input$facet == "Facet by founders"){
-      
-      p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
+      ggplot(data = ., aes(x = gnames, y = gloadings, fill = founders)) +
         geom_bar(stat = "identity", width = .75, position=position_dodge()) +
         theme(text = element_text(size=3),
               axis.text.x = element_text(angle = 70, hjust = 1),
@@ -295,25 +291,15 @@ server <- function(input, output){
     } %...>% ggplotly(. +
                theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7),
                      axis.text.y = element_text(size = 8),
-                     axis.title = element_text(size = 12, face = "bold")),
-             legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9))) %...>% layout(
-                       margin = list(b = 100, l = 50) # to fully display the x and y axis labels
+                     axis.title = element_text(size = 12, face = "bold"),
+                     legend.key = element_rect(fill = rgb(245/255, 245/255, 245/255, .9)))) %...>% layout(margin = list(b = 100, l = 50)
                      )
     }
   })
   
-  
   #process MGP phenotypic projection####
-  pheno.proj.process <- reactive({
-    proj.coords.a2 <- process.svd()[[2]]
-    proj.coords.a1 <- process.svd()[[3]]
-
-    return(list(proj.coords.a1, proj.coords.a2))
-  })
-
   #mutant registration reactive####
   mutant.comparison <- reactive({
-
     tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == input$mutant,])), 54, 3))$coords
     #debug: tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == "Alk2",])), 54, 3))$coords
     do.mean <- array.mean(tmp.mutant.registration[,,1:nrow(Y)])
@@ -322,7 +308,7 @@ server <- function(input, output){
   })
 
   output$process_heatmap <- renderRglwidget({
-    print(input$mutant)
+   
     do.mean <- matrix(colMeans(Y), nrow = 54, ncol = 3, byrow = T)
 
     par3d(zoom = .65)
@@ -330,7 +316,6 @@ server <- function(input, output){
 
     #vectors from DO mean to mutant
     shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
-    spheres3d(pheno.proj.process()[[1]], radius = .003, color = 1)
     bg3d(rgb(245/255,245/255,245/255, .9))
 
 
@@ -346,24 +331,25 @@ server <- function(input, output){
                    z = (rbind(as.vector(do.mean[,3]), as.vector((mutant.mean + (mutant.mean - do.mean) * (input$mag - 1))[,3]))),
                    lwd = 3,
                    col = 2)
-        # for(i in 1:54) arrow3d(do.mean[i,] - (mutant.mean[i,] - do.mean[i,]), mutant.mean[i,], type = "lines", col = "red", barblen = 0.005, lwd = 2)
       }
 
       if(input$mutant == "Whole genome"){
-        #for(i in 1:54) arrow3d(proj.pca1[i,], proj.pca2[i,], type = "lines", col = "red", barblen = 0, lwd = 2)
       }
     }
 
-    # for(i in 1:54) arrow3d(pheno.proj.process()[[2]][i,], pheno.proj.process()[[1]][i,] + (pheno.proj.process()[[1]][i,] - pheno.proj.process()[[2]][i,]) * (input$mag - 1), type = "lines", col = "black", barblen = 0.005, lwd = 3)
-    segments3d(x = (rbind(as.vector(pheno.proj.process()[[1]][,1]), as.vector((pheno.proj.process()[[2]] + (pheno.proj.process()[[2]] - pheno.proj.process()[[1]]) * (input$mag - 1))[,1]))),
-               y = (rbind(as.vector(pheno.proj.process()[[1]][,2]), as.vector((pheno.proj.process()[[2]] + (pheno.proj.process()[[2]] - pheno.proj.process()[[1]]) * (input$mag - 1))[,2]))),
-               z = (rbind(as.vector(pheno.proj.process()[[1]][,3]), as.vector((pheno.proj.process()[[2]] + (pheno.proj.process()[[2]] - pheno.proj.process()[[1]]) * (input$mag - 1))[,3]))),
-               lwd = 3)
-
-    rglwidget()
-
+    then(process.svd(),
+         function(phenos) {
+           spheres3d(phenos$pheno1, radius = .003, color = 1)
+               segments3d(x = rbind(phenos$pheno1[,1], phenos$pheno2[,1]  + ((phenos$pheno2[,1] - phenos$pheno1[,1]) * (input$mag - 1))),
+                        y = rbind(phenos$pheno1[,2], phenos$pheno2[,2]  + ((phenos$pheno2[,2] - phenos$pheno1[,2]) * (input$mag - 1))),
+                        z = rbind(phenos$pheno1[,3], phenos$pheno2[,3]  + ((phenos$pheno2[,3] - phenos$pheno1[,3]) * (input$mag - 1))),
+                        lwd = 3)
+               
+               rglwidget()
+         })
   })
 
+  
   # #custom MGP gene list code####
   # custom.process.svd <- eventReactive(input$update_process2, {
   #   # process.svd <- reactive({
