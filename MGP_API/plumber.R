@@ -116,7 +116,13 @@ mgp <- function(GO.term = "chondrocyte differentiation", mutant = NULL, Y, cv = 
   
   pathway.loadings <- data.frame(gloadings = reactive.svd[,1], gnames = as.character(rep(seq.info[,1], each = 8)), founders = rep(do.names, nrow(seq.info)))
   
+  bar_order <- pathway.loadings %>% 
+    group_by(gnames) %>%
+    summarise(test = diff(range(gloadings))) %>%
+    arrange(-test) 
   
+  pathway.loadings$gnames <- factor(pathway.loadings$gnames, levels = lapply(bar_order, as.character)$gnames)
+
   tmp.reactive <- results
   probs.rows <- tmp.reactive[[4]]
   
@@ -126,8 +132,7 @@ mgp <- function(GO.term = "chondrocyte differentiation", mutant = NULL, Y, cv = 
   proj.coords.a1 <- row2array3d(predict(tmp.reactive[[1]], probs.rows[c(which.min(tmp.reactive[[1]]$mod$ts[[1]][,1]), which.max(tmp.reactive[[1]]$mod$ts[[1]][,1])),])$y, Nlandmarks = ncol(Y)/3)
   proj.coords.a2 <- proj.coords.a1[,,2]
   proj.coords.a1 <- proj.coords.a1[,,1]
-  
-  
+
   return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2))
 }
 
@@ -140,7 +145,7 @@ mgp <- function(GO.term = "chondrocyte differentiation", mutant = NULL, Y, cv = 
 #* @param GO.term GO term to run
 #* @param mutant Mutant for comparison
 #* @param lambda Regularization strength
-#* @get /mgp_loadings
+#* @get /mgp
 
 function(GO.term = "chondrocyte differentiation", lambda = .06) {
   future::future({
