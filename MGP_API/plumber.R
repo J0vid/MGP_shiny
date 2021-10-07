@@ -253,3 +253,52 @@ function(num.processes = 5){
   }, seed = NULL)
 }
 
+#* Query the Ensembl database
+#* @param process
+#* @get /mgi
+
+function(process = "chondrocyte differentiation") {
+  future::future({
+    process.call <- DO.go[DO.go[,3] == process, -1]
+    colnames(process.call) <- c("go_id", "go_term", "ngenes")
+    
+    selection.vector <- c(process)
+    process.ano <- NULL
+    for(i in 1: length(selection.vector)) process.ano <- c(process.ano, as.character(DO.go[DO.go[,3] == selection.vector[i], 2]))
+    
+    coi <- c("ENSEMBL", "SYMBOL")
+    go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+    coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+    symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+    
+    transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+    
+    #symbol, chr, start, end
+    chr_name <- rep(NA,  length(unique(symbol2info$GENEID)))
+    gene.start <- rep(NA,  length(unique(symbol2info$GENEID)))
+    gene.end <- rep(NA,  length(unique(symbol2info$GENEID)))
+    
+    for(i in 1:length(unique(symbol2info$GENEID))){
+      
+      tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+      
+      chr_name[i] <- tmp.transcript$TXCHROM
+      gene.start[i] <- tmp.transcript$TXSTART
+      gene.end[i] <- tmp.transcript$TXEND
+      
+    }
+    
+    seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+    seq.info[,2] <- as.character(seq.info[,2])
+    seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+    
+    #biomart method for getting gene metadata
+    # seq.info <- getBM(attributes = c("mgi_symbol", "chromosome_name", "start_position", "end_position") , filters = "go" , values = process.ano ,mart = mouse)
+    # seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6
+    #get rid of weird chromosome names
+    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+    
+    return(list(process_call = process.call, seq_info = seq.info))
+    
+  })
+}
