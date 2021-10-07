@@ -40,7 +40,7 @@ DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
 
 #mgp function####
 
-mgp <- function(GO.term = "chondrocyte differentiation", mutant = NULL, Y, cv = F, lambda = .06){
+mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06, pls_axis = 1){
   
   selection.vector <- c(GO.term)
   # selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
@@ -114,7 +114,7 @@ mgp <- function(GO.term = "chondrocyte differentiation", mutant = NULL, Y, cv = 
   do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
   do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
   
-  pathway.loadings <- data.frame(gloadings = reactive.svd[,1], gnames = as.character(rep(seq.info[,1], each = 8)), founders = rep(do.names, nrow(seq.info)))
+  pathway.loadings <- data.frame(gloadings = reactive.svd[,pls_axis], gnames = as.character(rep(seq.info[,1], each = 8)), founders = rep(do.names, nrow(seq.info)))
   
   bar_order <- pathway.loadings %>% 
     group_by(gnames) %>%
@@ -126,18 +126,15 @@ mgp <- function(GO.term = "chondrocyte differentiation", mutant = NULL, Y, cv = 
   tmp.reactive <- results
   probs.rows <- tmp.reactive[[4]]
   
-  snp.dim = 1#1
+  snp.dim = pls_axis
   
   #calculate projection
-  proj.coords.a1 <- row2array3d(predict(tmp.reactive[[1]], probs.rows[c(which.min(tmp.reactive[[1]]$mod$ts[[1]][,1]), which.max(tmp.reactive[[1]]$mod$ts[[1]][,1])),])$y, Nlandmarks = ncol(Y)/3)
+  proj.coords.a1 <- row2array3d(predict(tmp.reactive[[1]], probs.rows[c(which.min(tmp.reactive[[1]]$mod$ts[[snp.dim]][,1]), which.max(tmp.reactive[[1]]$mod$ts[[snp.dim]][,1])),])$y, Nlandmarks = ncol(Y)/3)
   proj.coords.a2 <- proj.coords.a1[,,2]
   proj.coords.a1 <- proj.coords.a1[,,1]
 
-  return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2))
+  return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis]))
 }
-
-
-
 
 #* @apiTitle MGP API
 
@@ -147,12 +144,32 @@ mgp <- function(GO.term = "chondrocyte differentiation", mutant = NULL, Y, cv = 
 #* @param lambda Regularization strength
 #* @get /mgp
 
-function(GO.term = "chondrocyte differentiation", lambda = .06) {
+function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
   future::future({
-    mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = Y)
+    mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = Y, pls_axis = pls_axis)
   })
 }
 
+#* Draw a random correlation matrix for MGP effects in the cache
+#* @post /mgp_cor
+
+function(num.processes = 5){
+  future::future({
+    chosen.processes <- sample(1:nrow(cached.params), num.processes)
+    tmp.proc.names <- rep(NA, num.processes)
+    tmp.cor <- matrix(NA, nrow = 162, ncol = num.processes)
+    for(i in 1:num.processes){
+      tmp.cor[,i] <- cached.results[[chosen.processes[i]]][[1]][[1]]$mod$V_super[,1]
+      tmp.split <- strsplit(cached.params[chosen.processes[i],1], split = "\\|")[[1]]
+      name.buffer <- NULL
+      for(j in 1 : length(tmp.split)) {
+        name.buffer <- c(name.buffer, as.character(DO.go[DO.go[,2] == tmp.split[j],3]))
+      }
+      tmp.proc.names[i] <- paste(name.buffer, collapse = " + ") 
+    }
+    return(list(cormat = cor(tmp.cor), process.names = tmp.proc.names))
+  }, seed = NULL)
+}
 # mgp <- function(GO.term = "GO:0002062", mutant = "Alk6", cv = F, lambda = .06){
 # 
 #   process.ano <- as.character(GO.term)
