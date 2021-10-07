@@ -146,6 +146,7 @@ body <- dashboardBody(useShinyjs(),
                                            width = 12,
                                            actionButton("redraw_cors", "Draw correlation heatmap"),
                                            br(),
+                                           br(),
                                            withSpinner(plotlyOutput("process_correlations", width = "95%"), type = 6, color = "#a6192e")),
                                        br(),
                                        tableOutput("recents")
@@ -570,9 +571,21 @@ server <- function(input, output){
       #change title name to selected process
       if(input$mutant != "Whole genome"){
         do.mean <- mutant.comparison()[[1]]
-        MGP.mutant.cor <- cor(process.svd()[[1]]$mod$V_super[,input$pls_axis], manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == input$mutant))))$coef[2,])
+        
+        my.cor <- then(process.svd(),
+                               function(phenos) {
+                                 
+                                 mutant.cor <- cor(as.numeric(phenos$pheno_loadings), as.numeric(manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == input$mutant))))$coef[2,]))
+                                 # cor(as.numeric(phenos$pheno1 - phenos$pheno2), manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == input$mutant))))$coef[2,])
+                                 print(mutant.cor)
+                                 return(paste0("Correlation between ", paste(first.title, collapse = ", ", sep = ", "), " and ", input$mutant, " mutant: ", round(my.cor, digits = 3)))
+                                 }
+                              )
+        print(my.cor)
+        my.title <- my.cor
+ 
         # MGP.mutant.cor <- cor(process.svd()[[1]]$mod$v[,1], prcomp(rbind(as.numeric(do.mean), as.numeric(mutant.comparison()[[2]])))$rotation[,1])
-        my.title <- paste0("Correlation between ", paste(first.title, collapse = ", ", sep = ", "), " and ", input$mutant, " mutant: ", round(MGP.mutant.cor, digits = 3))
+        
       }
       if(input$mutant == "Whole genome"){
         MGP.mutant.cor <- cor(process.svd()[[1]]$mod$V_super[,1], wgbetas)
@@ -581,6 +594,7 @@ server <- function(input, output){
     }
     
     return(my.title)
+    
   })
   
   output$title <- renderText({
@@ -591,20 +605,17 @@ server <- function(input, output){
   
   #meta-analysis of user selections####
   #convert cached.params from GO to process names
+  correlation_draw <- eventReactive(input$redraw_cors, {  
+    raw_api_res <- httr::POST(url = paste0("http://127.0.0.1:3636", "/mgp_cor"), encode = "json")
+    cormat <- jsonlite::fromJSON(httr::content(raw_api_res, "text"))
+    cormat$cormat <- abs(cormat$cormat)
+    colnames(cormat$cormat) <- cormat$process.names
+    rownames(cormat$cormat) <- cormat$process.names
+    heatmaply::heatmaply(cormat$cormat, symm = T, dendrogram = "none") 
+    })
+  
   output$process_correlations <- renderPlotly({
-    chosen.processes <- sample(1:nrow(cached.params), 10)
-    tmp.proc.names <- rep(NA, 10)
-    tmp.cor <- matrix(NA, nrow = 162, ncol = 10)
-    for(i in 1:10){
-      tmp.cor[,i] <- cached.results[[chosen.processes[i]]][[1]][[1]]$mod$V_super[,1]
-      tmp.split <- strsplit(cached.params[chosen.processes[i],1], split = "\\|")[[1]]
-      name.buffer <- NULL
-      for(j in 1 : length(tmp.split)) {
-        name.buffer <- c(name.buffer, as.character(DO.go[DO.go[,2] == tmp.split[j],3]))
-      }
-      tmp.proc.names[i] <- paste(name.buffer, collapse = " + ") 
-    }
-    heatmaply::heatmaply(cor(tmp.cor), labRow = tmp.proc.names, symm = T)
+    correlation_draw()
   })
 
   #report generator####
