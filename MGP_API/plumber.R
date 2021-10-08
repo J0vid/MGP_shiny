@@ -1,33 +1,35 @@
 library(plumber)
-future::plan("multicore")
-
-library(shiny)
-library(shinydashboard)
-library(ggplot2)
 library(Morpho)
-library(rgl)
-library(geomorph)
-library(plotly)
-library(rmarkdown)
-library(shapes)
 library(ddsPLS)
 library(Jovid)
-library(shinycssloaders)
-library(shinyjs)
 library(GenomicFeatures)
 library(org.Mm.eg.db)
 library(dplyr)
 library(dbplyr)
+future::plan("multicore")
 
 
 #save(combined.markers, DO.go, giga.pca, mutant.db, mutant.lms, shape.mean, Y, DO.probs, file = "/data/MGP_data/offline_data.Rdata")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
 
 #local dirs
-mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
-load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
-load("~/shiny/shinyapps/MGP/cached.results.Rdata")
-DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
+# mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
+# load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
+# load("~/shiny/shinyapps/MGP/cached.results.Rdata")
+# DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
+
+#docker dirs
+# setwd("/srv/shiny-server/")
+# mmusculusEnsembl <- loadDb(file="ensemble.sqlite")
+# load("shiny_data.Rdata")
+# load("cached.results.Rdata")
+# DO_probs_DB <- src_sqlite("MGP_genotypes.sqlite")
+
+#genopheno deployment dirs
+# mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
+# load("/data/MGP_data/shiny_data.Rdata")
+# load("/data/MGP_data/cached.results.Rdata")
+# DO_probs_DB <- src_sqlite("/data/MGP_data/MGP_genotypes.sqlite")
 
 #core mgp function####
 mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06, pls_axis = 1){
@@ -88,9 +90,9 @@ mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06
   for(i in 1:nrow(seq.indexes)) probs.rows[, probrowseq[i]:(probrowseq[i+1] - 1) ] <- as.matrix(collect(tbl(DO_probs_DB, seq.indexes[i,2])))
   #fit pls2B, need duv, gene names, seq.indexes
   if(cv){
-    pls.svd.cv <- perf_mddsPLS(Xs = probs.rows, Y = Y, lambda_min = .03, lambda_max = .15, n_lambda = 4, kfolds = 10, R = 1, mode = "reg", NCORES = 11)
-    pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = pls.svd.cv$Optim$optim_para_one[1])
-  } else {pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = lambda)
+    pls.svd.cv <- perf_mddsPLS(Xs = probs.rows, Y = Y, lambda_min = .03, lambda_max = .15, n_lambda = 4, kfolds = 10, R = pls_axis, mode = "reg", NCORES = 11)
+    pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = pls_axis, lambda = pls.svd.cv$Optim$optim_para_one[1])
+  } else {pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = pls_axis, lambda = lambda)
   }
   #cache to pls list for new analyses
   results <- list(pls.svd, gene.names, seq.info, probs.rows)
@@ -204,7 +206,17 @@ custom.mgp <- function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), Y, cv = F, lam
     return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis]))
 }
 
+#set CORS parameters####
+#* @filter cors
+cors <- function(res) {
+  res$setHeader("Access-Control-Allow-Origin", "*")
+  res$setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+  res$setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization")
+  res$setHeader("Access-Control-Allow-Credentials", "true")
+  plumber::forward()
+}
 
+#API definition####
 #* @apiTitle MGP API
 
 #* Run an MGP model
