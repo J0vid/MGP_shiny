@@ -18,14 +18,14 @@ library(dplyr)
 library(dbplyr)
 library(future)
 library(promises)
-future::plan("multicore")
+future::plan("multisession")
 
 #save(combined.markers, DO.go, giga.pca, mutant.db, mutant.lms, shape.mean, Y, DO.probs, file = "/data/MGP_data/offline_data.Rdata")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
 
 #local dirs
-mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
-load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
+# mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
+# load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
 # load("~/shiny/shinyapps/MGP/cached.results.Rdata")
 # DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
 # # DO_probs_DB <- s3read_using(FUN = src_sqlite, object = "s3://mgpgenotypes/MGP_genotypes.sqlite") #src_sqlite("mgpgenotypes.s3.ca-central-1.amazonaws.com/MGP_genotypes.sqlite")
@@ -40,12 +40,12 @@ load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
 # DO_probs_DB <- src_sqlite("/srv/shiny-server/MGP/MGP_genotypes.sqlite")
 
 #genopheno deployment dirs
-# # # mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
-# load("/data/MGP_data/shiny_data.Rdata")
+mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
+load("/data/MGP_data/shiny_data.Rdata")
 # load("/data/MGP_data/cached.results.Rdata")
 # DO_probs_DB <- src_sqlite("/data/MGP_data/MGP_genotypes.sqlite")
 
-
+#ui####
 body <- dashboardBody(useShinyjs(),
                       tags$head(tags$link(rel="shortcut icon", href="favicon.ico")),
                       tags$head(tags$link(rel = "stylesheet", type = "text/css", href = "mgp_style.css")),
@@ -170,7 +170,7 @@ ui <- dashboardPage(title = "Process MGP",
                     body
       )
 
-
+#server####
 server <- function(input, output){
   
   #stringify custom process list####
@@ -199,16 +199,14 @@ server <- function(input, output){
   
   #main process reactive####
   process.svd <- eventReactive(input$update_process, {
-    
+    selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
+    tmp.lambda <- input$lambda
     #debug: process.svd <- reactive({
     future::future({
-      print(input$variables2)
-    selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
-    
-    raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/mgp"),
-                             query = list(GO.term = selection.vector, lambda = input$lambda),
+      raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/mgp"),
+                             query = list(GO.term = selection.vector, lambda = tmp.lambda),
                              encode = "json")
-    jsonlite::fromJSON(httr::content(raw_api_res, "text"))
+      jsonlite::fromJSON(httr::content(raw_api_res, "text"))
     }) 
   })
   
@@ -354,10 +352,11 @@ server <- function(input, output){
   # #custom MGP gene list code####
   custom.process.svd <- eventReactive(input$update_process2, {
     # selection.vector <- c("Bmp7, Bmp2, Bmp4, Ankrd11")
-
+    tmp.list <- input$custom_process
+    tmp.lambda <- input$lambda2
     future::future({
       raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/custom_mgp"),
-                               query = list(genelist = input$custom_process, lambda = input$lambda2),
+                               query = list(genelist = tmp.list, lambda = tmp.lambda),
                                encode = "json")
       jsonlite::fromJSON(httr::content(raw_api_res, "text"))
     }) 
