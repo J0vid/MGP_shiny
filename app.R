@@ -18,6 +18,7 @@ library(dplyr)
 library(dbplyr)
 library(future)
 library(promises)
+library(data.table)
 future::plan("multisession")
 
 #save(combined.markers, DO.go, giga.pca, mutant.db, mutant.lms, shape.mean, Y, DO.probs, file = "/data/MGP_data/offline_data.Rdata")
@@ -40,8 +41,8 @@ future::plan("multisession")
 # DO_probs_DB <- src_sqlite("/srv/shiny-server/MGP/MGP_genotypes.sqlite")
 
 #genopheno deployment dirs
-mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
-load("/data/MGP_data/shiny_data.Rdata")
+# mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
+# load("/data/MGP_data/shiny_data.Rdata")
 # load("/data/MGP_data/cached.results.Rdata")
 # DO_probs_DB <- src_sqlite("/data/MGP_data/MGP_genotypes.sqlite")
 
@@ -82,9 +83,9 @@ body <- dashboardBody(useShinyjs(),
            ),
            conditionalPanel(condition = "input.tabs1 == 'Process MGP'",
                               column(width = 4,
-                                   textInput("process", label = "Process", value = c("chondrocyte", "BMP", "fibroblast", "cohesin", "apoptosis")[sample(1:5,1)]),
-                                   # selectInput("process_test", label = "Process", multiple = T, choices = sort(DO.go[,3]), selected = c("chondrocyte differentiaion")[sample(1,1)]),
-                                   uiOutput('variables')
+                                   # textInput("process", label = "Process", value = c("chondrocyte", "BMP", "fibroblast", "cohesin", "apoptosis")[sample(1:5,1)]),
+                                   selectInput("variables2", label = "Process", multiple = T, choices = sort(DO.go[,3]), selected = c("chondrocyte differentiaion")[sample(1,1)]),
+                                   # uiOutput('variables')
                               ),
                               column(width = 4,
                                    selectInput("facet", "Type of plot", choices = c("Simple","Messy, but informative", "Just the allele ranges", "Facet by founders")),
@@ -122,8 +123,14 @@ body <- dashboardBody(useShinyjs(),
                                            status = "warning",
                                            solidHeader = F,
                                            width = 12,
-                                           withSpinner(rglwidgetOutput("process_heatmap", width = "95%"), type = 6, color = "#a6192e"))
-                                       
+                                           withSpinner(rglwidgetOutput("process_heatmap", width = "95%"), type = 6, color = "#a6192e")),
+                                       box(title = tags$b("Mutant DB"),
+                                           status = "warning",
+                                           solidHeader = F,
+                                           width = 12,
+                                           collapsed = T,
+                                           collapsible = T,
+                                           dataTableOutput("mutantdb"))
                               ),
                               tabPanel("Custom MGP",
                                        br(),
@@ -177,35 +184,39 @@ server <- function(input, output){
   output$value <- renderText({str(input$custom_process)})
   
   #process filtering reactive####
-  outVar <- reactive({
-    if(nchar(input$process) > 2){
-    with.counts <- DO.go[grep(DO.go[,3], pattern = tolower(input$process)),3:4]
-    with.counts[,1] <- as.character(with.counts[,1])
-    with.counts[,2] <- as.character(with.counts[,2])
-    process.ano <- with.counts[,1]
-    
-    with.counts.char <- as.character(apply(with.counts, 1, FUN = function(x){ paste0(x[1], " (", x[2], " genes)")}))
-    
-    return(list(process.ano, with.counts.char))
-  }
-  })
+  # outVar <- reactive({
+  #   if(nchar(input$process) > 2){
+  #   with.counts <- DO.go[grep(DO.go[,3], pattern = tolower(input$process)),3:4]
+  #   with.counts[,1] <- as.character(with.counts[,1])
+  #   with.counts[,2] <- as.character(with.counts[,2])
+  #   process.ano <- with.counts[,1]
+  #   
+  #   with.counts.char <- as.character(apply(with.counts, 1, FUN = function(x){ paste0(x[1], " (", x[2], " genes)")}))
+  #   
+  #   return(list(process.ano, with.counts.char))
+  # }
+  # })
   
   #slow down reactivity of text input
-  process.list <- debounce(outVar, 300)
+  # process.list <- debounce(outVar, 300)
   
-  output$variables <- renderUI({
-    selectInput('variables2', 'Process filter', process.list()[[2]], multiple = T)
-  })
+  # output$variables <- renderUI({
+  #   selectInput('variables2', 'Process filter', process.list()[[2]], multiple = T)
+  # })
   
   #main process reactive####
   process.svd <- eventReactive(input$update_process, {
-    selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
+    print(input$variables2)
+    selection.vector <- paste(input$variables2, sep = ",") #process.list()[[1]][process.list()[[2]] %in% input$variables2]
+    print(selection.vector)
+    print(length(selection.vector))
     tmp.lambda <- input$lambda
     #debug: process.svd <- reactive({
     future::future({
       raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/mgp"),
                              query = list(GO.term = selection.vector, lambda = tmp.lambda),
                              encode = "json")
+      print(jsonlite::fromJSON(httr::content(raw_api_res, "text")))
       jsonlite::fromJSON(httr::content(raw_api_res, "text"))
     }) 
   })
@@ -346,6 +357,11 @@ server <- function(input, output){
                
                rglwidget()
          })
+  })
+  
+  #mutant db
+  output$mutantdb <- renderDataTable({
+    mutant.db[,2:10]
   })
 
   
@@ -493,38 +509,38 @@ server <- function(input, output){
   
   #dynamic title with correlation b/t mutant effect and current MGP vector####
   title.react <- eventReactive(title.change(), {
-    first.title <- paste0(paste(process.list()[[1]][process.list()[[2]] %in% input$variables2], collapse = ", ", sep = ", "), " MGP")
+    first.title <- "sup"#paste0(paste(DO.go[grep(DO.go[,3], pattern = tolower(input$variables2)), 3], collapse = ", ", sep = ", "), " MGP")#paste0(paste(process.list()[[1]][process.list()[[2]] %in% input$variables2], collapse = ", ", sep = ", "), " MGP")
+    tmp.mutant <- input$mutant
     
-    if(input$mutant == " "){my.title <- first.title}
     
-    if(input$mutant != " "){
+    if(tmp.mutant == " "){my.title <- first.title}
+    
+    if(tmp.mutant != " "){
       #change title name to selected process
-      if(input$mutant != "Whole genome"){
+      if(tmp.mutant != "Whole genome"){
         do.mean <- mutant.comparison()[[1]]
         
         my.cor <- then(process.svd(),
                                function(phenos) {
                                  
-                                 mutant.cor <- cor(as.numeric(phenos$pheno_loadings), as.numeric(manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == input$mutant))))$coef[2,]))
-                                 # cor(as.numeric(phenos$pheno1 - phenos$pheno2), manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == input$mutant))))$coef[2,])
+                                 mutant.cor <- cor(as.numeric(phenos$pheno_loadings), as.numeric(manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == tmp.mutant))))$coef[2,]))
+                                 # cor(as.numeric(phenos$pheno1 - phenos$pheno2), manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == tmp.mutant))))$coef[2,])
                                  print(mutant.cor)
-                                 return(paste0("Correlation between ", paste(first.title, collapse = ", ", sep = ", "), " and ", input$mutant, " mutant: ", round(my.cor, digits = 3)))
+                                 return(paste0("Correlation between ", paste(first.title, collapse = ", ", sep = ", "), " and ", tmp.mutant, " mutant: ", round(my.cor, digits = 3)))
                                  }
                               )
         print(my.cor)
         my.title <- my.cor
- 
+       
         # MGP.mutant.cor <- cor(process.svd()[[1]]$mod$v[,1], prcomp(rbind(as.numeric(do.mean), as.numeric(mutant.comparison()[[2]])))$rotation[,1])
         
       }
-      if(input$mutant == "Whole genome"){
+      if(tmp.mutant == "Whole genome"){
         MGP.mutant.cor <- cor(process.svd()[[1]]$mod$V_super[,1], wgbetas)
         my.title <- paste0("Correlation between ", paste(first.title, collapse = ", ", sep = ", "), " and whole genome MGP: ", round(MGP.mutant.cor, digits = 3))
       }
     }
-    
-    return(my.title)
-    
+
   })
   
   output$title <- renderText({

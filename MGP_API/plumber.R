@@ -13,10 +13,10 @@ future::plan("multicore")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
 
 #local dirs
-# mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
-# load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
-# load("~/shiny/shinyapps/MGP/cached.results.Rdata")
-# DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
+mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
+load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
+load("~/shiny/shinyapps/MGP/cached.results.Rdata")
+DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
 
 #docker dirs
 # setwd("/srv/shiny-server/")
@@ -34,9 +34,9 @@ future::plan("multicore")
 #core mgp function####
 mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06, pls_axis = 1){
   
-  selection.vector <- c(GO.term)
+  selection.vector <- GO.term
   # selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
-  
+  print(length(selection.vector))
   process.ano <- NULL
   for(i in 1: length(selection.vector)) process.ano <- c(process.ano, as.character(DO.go[DO.go[,3] == selection.vector[i], 2]))
   
@@ -55,14 +55,14 @@ mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06
   for(i in 1:length(unique(symbol2info$GENEID))){
     
     tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
-    
+    print(i)
     chr_name[i] <- tmp.transcript$TXCHROM
     gene.start[i] <- tmp.transcript$TXSTART
     gene.end[i] <- tmp.transcript$TXEND
     
   }
   
-  seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+  seq.info <- data.frame(mgi_symbol = unique(go2symbol$SYMBOL), chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
   seq.info[,2] <- as.character(seq.info[,2])
   seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
   
@@ -227,6 +227,10 @@ cors <- function(res) {
 
 function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
   future::future({
+    print(GO.term)
+    
+    GO.term <- strsplit(GO.term, split = ",")[[1]]
+    
     mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = Y, pls_axis = as.numeric(pls_axis))
   })
 }
@@ -249,9 +253,9 @@ function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1) 
 
 function(num.processes = 5){
   future::future({
-    chosen.processes <- sample(1:nrow(cached.params), num.processes)
+    chosen.processes <- sample(1:nrow(cached.params), as.numeric(num.processes))
     tmp.proc.names <- rep(NA, num.processes)
-    tmp.cor <- matrix(NA, nrow = 162, ncol = num.processes)
+    tmp.cor <- matrix(NA, nrow = 162, ncol = as.numeric(num.processes))
     for(i in 1:num.processes){
       tmp.cor[,i] <- cached.results[[chosen.processes[i]]][[1]][[1]]$mod$V_super[,1]
       tmp.split <- strsplit(cached.params[chosen.processes[i],1], split = "\\|")[[1]]
