@@ -46,6 +46,14 @@ future::plan("multisession")
 # load("/data/MGP_data/cached.results.Rdata")
 # DO_probs_DB <- src_sqlite("/data/MGP_data/MGP_genotypes.sqlite")
 
+
+#get gene numbers for process field
+  with.counts <- DO.go[,3:4]
+  with.counts[,1] <- as.character(with.counts[,1])
+  with.counts[,2] <- as.character(with.counts[,2])
+  with.counts.char <- as.character(apply(with.counts, 1, FUN = function(x){ paste0(x[1], " (", x[2], " genes)")}))
+
+
 #ui####
 body <- dashboardBody(useShinyjs(),
                       tags$head(tags$link(rel="shortcut icon", href="favicon.ico")),
@@ -59,6 +67,29 @@ body <- dashboardBody(useShinyjs(),
            column(width = 12,
                   conditionalPanel(condition = "input.tabs1 == 'About this app'",
                                    tags$b("Pick a tab to see some options"))
+           ),
+           conditionalPanel(condition = "input.tabs1 == 'Process MGP'",
+                            column(width = 4,
+                                   # textInput("process", label = "Process", value = c("chondrocyte", "BMP", "fibroblast", "cohesin", "apoptosis")[sample(1:5,1)]),
+                                   selectInput("variables2", label = "Process", multiple = T, choices = with.counts.char),
+                                   sliderInput("lambda", "Sparsity parameter", min = 0, max = .15, value = .06, step = .01)
+                                   # uiOutput('variables')
+                            ),
+                            column(width = 4,
+                                   selectInput("facet", "Type of plot", choices = c("Simple","Messy, but informative", "Just the allele ranges", "Facet by founders")),
+                                   # numericInput("lambda", "Sparsity parameter", value = .06, min = 0, max = 1)
+                                   sliderInput("pls_axis", "PLS axis", min = 1, max = 4, value = 1, step = 1 )
+                            ),
+                            column(width = 4,
+                                   numericInput("mag", "Magnification", value = 4, min = 1, max = 10),
+                                   selectInput("mutant", "Make a comparison?", choices = c(" ","Whole genome", as.character(unique(mutant.db$Genotype))))
+                            ),
+                            column(width = 4,
+                                   disabled(downloadButton("report", "Send me the results!")),
+                                   br(),
+                                   br(),
+                                   actionButton("update_process", "Update process!")
+                            ),
            ),
            conditionalPanel(condition = "input.tabs1 == 'Custom MGP'",
                               column(width = 4,
@@ -79,30 +110,6 @@ body <- dashboardBody(useShinyjs(),
                               ),
                               column(width = 4,
                                    actionButton("update_process2", "Update process!")
-                              )
-           ),
-           conditionalPanel(condition = "input.tabs1 == 'Process MGP'",
-                              column(width = 4,
-                                   # textInput("process", label = "Process", value = c("chondrocyte", "BMP", "fibroblast", "cohesin", "apoptosis")[sample(1:5,1)]),
-                                   selectInput("variables2", label = "Process", multiple = T, choices = sort(DO.go[,3]), selected = c("chondrocyte differentiaion")[sample(1,1)]),
-                                   # uiOutput('variables')
-                              ),
-                              column(width = 4,
-                                   selectInput("facet", "Type of plot", choices = c("Simple","Messy, but informative", "Just the allele ranges", "Facet by founders")),
-                                   # numericInput("lambda", "Sparsity parameter", value = .06, min = 0, max = 1)
-                                   sliderInput("lambda", "Sparsity parameter", min = 0, max = .15, value = .06, step = .01),
-                                   sliderInput("pls_axis", "PLS axis", min = 1, max = 4, value = 1, step = 1 )
-                              ),
-                              column(width = 4,
-                                   numericInput("mag", "Magnification", value = 4, min = 1, max = 10),
-                                   selectInput("mutant", "Make a comparison?", choices = c(" ","Whole genome", as.character(unique(mutant.db$Genotype))))
-                              ),
-                             column(width = 4,
-                                   disabled(downloadButton("report", "Send me the results!"))
-                              ),
-                              column(width = 4,
-                                   br(),
-                                   actionButton("update_process", "Update process!")
                               )
            ),
            conditionalPanel(condition = "input.tabs1 == 'Recent searches'"
@@ -207,7 +214,8 @@ server <- function(input, output){
   #main process reactive####
   process.svd <- eventReactive(input$update_process, {
     print(input$variables2)
-    selection.vector <- paste(input$variables2, sep = ",") #process.list()[[1]][process.list()[[2]] %in% input$variables2]
+    
+    selection.vector <- paste(with.counts[with.counts.char %in% input$variables2, 1], collapse = ",") #process.list()[[1]][process.list()[[2]] %in% input$variables2]
     print(selection.vector)
     print(length(selection.vector))
     tmp.lambda <- input$lambda
