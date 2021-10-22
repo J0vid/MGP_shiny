@@ -1,0 +1,2844 @@
+---
+title: "MGP paper analysis"
+output: html_notebook
+---
+
+
+```{r Initial setup, message=FALSE, warning=FALSE}
+library(geomorph)
+library(MASS)
+library(ddsPLS)
+library(ggplot2)
+library(Morpho)
+library(shapes)
+library(Jovid)
+library(biomaRt)
+library(plotly)
+
+#load everything
+#to remove: 327, 353, 106, 108
+#to_remove <- read.csv("/mnt/Hallgrimsson/Users/Katz/DO Mice/QTL_analysis/rqtl2/Geno_diagnostics/outputs/MM/obs_to_remove_MM.csv")[,1]
+
+#to_remove <- c(as.character(to_remove), "DO327", "DO353", "DO106", "DO108")
+
+#kinship
+DO.K <- as.matrix(read.csv("~/Documents/MGP_local_analysis/K_overall.csv", row.names = 1))
+
+#pheno
+DO.gpa <- readRDS( "~/Documents/MGP_local_analysis/gpa_skull_full.rds")
+DO.gpa <- readRDS("/mnt/Hallgrimsson/Users/Katz/DO_Mice/QTL_analysis/rqtl2/data/gpa_final/gpa_skull_sym.rds")
+
+#DO.pheno <- DO.gpa$coords
+DO.pheno <- DO.gpa$Sym
+
+#DO.pheno <- DO.pheno[,,dimnames(DO.pheno)[[3]] %in% to_remove == F]
+
+#Covariates to fix: K_DO_11 M->F, K_DO_60 F->M
+DO.covars <- read.csv( "~/Documents/MGP_local_analysis/covs_skull.csv")
+#DO.covars <- DO.covars[DO.covars$X %in% to_remove == F,]
+
+#covars and gpa need to be matched to everything else
+# DO.pheno <- DO.pheno[,,DO.covars$ID %in% rownames(DO.K)]
+# DO.covars <- DO.covars[DO.covars$ID %in% rownames(DO.K),]
+  
+  
+#allele probs
+# DO.probs <- readRDS( "~/Documents/MGP_local_analysis/alleleprobs.rds")
+# 
+# #RQTL2 changes the format of the probabilities by breaking them out into individual chromosomes. I need to rbind them back to the old shape:
+# #individual * founders * markers
+# 
+# DO.probs <- abind::abind(DO.probs$`1`, DO.probs$`2`, DO.probs$`3`, DO.probs$`4`, DO.probs$`5`, DO.probs$`6`, DO.probs$`7`, DO.probs$`8`, DO.probs$`9`, DO.probs$`10`, DO.probs$`11`, DO.probs$`12`, DO.probs$`13`, DO.probs$`14`, DO.probs$`15`, DO.probs$`16`, DO.probs$`17`, DO.probs$`18`, DO.probs$`19`, DO.probs$X, along = 3)
+# 
+# save(DO.probs, file = "~/Documents/MGP_local_analysis/do_probs.Rdata")
+
+load("~/Documents/MGP_local_analysis/do_probs.Rdata")
+
+DO.size <- DO.gpa$size[names(DO.gpa$size) %in% dimnames(DO.probs)[[1]]]
+DO.pheno <- DO.pheno[,,dimnames(DO.pheno)[[3]] %in% dimnames(DO.probs)[[1]]]
+
+
+dim(DO.pheno)
+
+DO.size <- DO.size[sort(names(DO.size), index.return = T)$ix]
+DO.pheno <- DO.pheno[,,sort(dimnames(DO.pheno)[[3]], index.return = T)$ix]
+
+DO.probs <- DO.probs[dimnames(DO.probs)[[1]] %in% dimnames(DO.pheno)[[3]],,]
+
+DO.probs <- DO.probs[sort(dimnames(DO.probs)[[1]], index.return = T)$ix,,]
+
+DO.covars <- DO.covars[as.character(DO.covars$X) %in% dimnames(DO.pheno)[[3]],]
+
+DO.covars <- DO.covars[sort(as.character(DO.covars$X), index.return = T)$ix,]
+
+DO.K <- DO.K[rownames(DO.K) %in% DO.covars$X, colnames(DO.K) %in% DO.covars$X]
+DO.K <- DO.K[sort(rownames(DO.K), index.return = T)$ix, sort(colnames(DO.K), index.return = T)$ix]
+
+
+
+View(cbind(dimnames(DO.pheno)[[3]], dimnames(DO.probs)[[1]], as.character(DO.covars$X), names(DO.size)))
+
+
+#this has the dimensions of the gigamuga array, but about half the mice are megamuga genotyped...what's going on?
+# load("/mnt/Hallgrimsson/Users/Katz/DO Mice/QTL_analysis/rqtl2/data/qtl2_files/GM_primary_files/GM_snps.Rdata")
+# load("/mnt/Hallgrimsson/Users/Katz/DO Mice/QTL_analysis/rqtl2/data/qtl2_files/MM_primary_files/MM_snps.Rdata")
+# 
+# length(GM_snps$marker %in% dimnames(DO.probs)[[3]])
+# length(MM_snps$marker %in% dimnames(DO.probs)[[3]])
+# 
+# #let's combine GM_snps and MM_snps and then filter for only the unique markers between the two sets
+# combined.markers <- rbind(GM_snps[, 1:4], MM_snps[!MM_snps$marker %in% GM_snps$marker, 1:4])
+# 
+# #after that, let's match DO.probs to the combined marker set
+# sum(combined.markers$marker %in% dimnames(DO.probs)[[3]])
+# 
+# combined.markers <- combined.markers[combined.markers$marker %in% dimnames(DO.probs)[[3]],]
+#here are the marker names not in the previously combined array
+#DO.probs[,,dimnames(DO.probs)[[3]] == dimnames(DO.probs)[[3]][!dimnames(DO.probs)[[3]]%in% dimnames(DO.probs)[[3]]][1]]
+
+#load and combine all physical maps
+combined.markers <- read.csv("/mnt/Hallgrimsson/Users/Katz/DO_Mice/QTL_analysis/rqtl2/data/qtl2_files/MMnGM_processed_files/MMnGM_info.csv", comment.char="#")
+
+combined.markers <- combined.markers[which(combined.markers$marker %in% dimnames(DO.probs)[[3]]),]
+#all.equal.character(as.character(combined.markers$marker), dimnames(DO.probs)[[3]])
+
+# View(cbind(as.character(combined.markers$marker), dimnames(DO.probs)[[3]]))
+# 
+# test <- rep(NA, dim(DO.probs)[3])
+# for(i in 1:dim(DO.probs)[3]) test[i] <- sum(DO.probs[,,i])
+#that shows that everyone has probabilities for every marker. 
+
+#let's look at genotype probs next
+#genoprobs <- readRDS( "/mnt/Hallgrimsson/Users/Katz/DO Mice/QTL_analysis/rqtl2/data/genoprobs.rds")
+#genoprobs also sum to 1 for everybody, so there's some imputation of marker allele states on by default. DK will email about it to clarify
+
+#sweep out grand mean of lms
+# DO.resids <- two.d.array(sweep(x = DO.pheno, MARGIN = 2,STATS = apply(DO.gpa$coords, 2, mean),FUN = "-"))
+DO.resids <- two.d.array(sweep(x = DO.pheno, MARGIN = 2,STATS = apply(DO.gpa$Sym, 2, mean),FUN = "-"))
+
+g_agg <- aggregate(DO.resids, by=list(DO.covars$ngen),FUN="mean")
+g_means <- as.matrix(g_agg[,2:ncol(g_agg)])
+
+group.resids <- matrix(NA, nrow = nrow(DO.resids), ncol = ncol(DO.resids))
+for(i in 1:nrow(DO.resids)){
+  which.g <- match(DO.covars$ngen[i], g_agg[,1])
+  group.resids[i,] <- DO.resids[i,]-g_means[which.g,1:ncol(g_means)]
+}
+
+# do.mean <- DO.gpa$consensus
+do.mean <- DO.gpa$mshape
+Y <- group.resids
+
+gr.mean <- array(NA, dim = c(54,3,nrow(group.resids)))
+for(i in 1:nrow(group.resids)) gr.mean[,,i] <- arrayspecs(group.resids, 54, 3)[,,i] + do.mean
+
+#save(mouse, mouse.ply, consensus.skull, MM_snps, do.mean, file = "/home/bhlab/shiny/DOMGP/combined_everything.Rdata")
+
+gc()
+
+```
+
+
+```{r supplemental figures}
+
+plot(prcomp(group.resids)$x, col = DO.covars$ngen, pch = 19)
+
+# PCA 1-2 Plot
+pcscores <- prcomp(group.resids)$x
+xpc <- 1
+ypc <- 2
+minx <- min(pcscores[,xpc])
+maxx <- max(pcscores[,xpc])
+miny <- min(pcscores[,ypc])
+maxy <- max(pcscores[,ypc])
+
+propvars <- (prcomp(group.resids)$sdev^2/sum(prcomp(group.resids)$sdev^2)) * 100
+
+plot(pcscores[,xpc],pcscores[,ypc],asp=1, type='n',
+     xlim=c(minx,maxx),ylim=c(miny,maxy),xlab="", ylab="")
+segments(x0=0,x1=0,y0=1,y1=-1,lty=2,col=rgb(0.2,0.2,0.2,0.3))
+segments(x0=1,x1=-1,y0=0,y1=0,lty=2,col=rgb(0.2,0.2,0.2,0.3))
+ax.cex <- 0.8
+mtext(text = paste("PC", xpc, " (", round(propvars[xpc]), "% of variance)",sep=""),
+      side = 1,line = 2, cex=ax.cex)
+mtext(text = paste("PC", ypc, " (", round(propvars[ypc]), "% of variance)",sep=""),
+      side = 2,line = 2, cex=ax.cex)
+
+# colors and generation indices
+gen <- DO.covars$ngen
+gens <- unique(gen)
+cols <- 1:length(gens)
+
+# Plot 95% convex hull by generation
+# generation hulls (distinguished by outline color)
+for(i in 1:length(gens)){
+  scores_i <- pcscores[which(gen==gens[i]),]
+  pcX_95 <- quantile(scores_i[,xpc],probs=c(0.025,0.975))
+  pcY_95 <- quantile(scores_i[,ypc],probs=c(0.025,0.975))
+  # scores in 95% interval for each sample on each PC
+  i_95 <- which(scores_i[,xpc] > pcX_95[1] & scores_i[,xpc] < pcX_95[2] & scores_i[,ypc]> pcY_95[1]& scores_i[,ypc]< pcY_95[2])
+  # hulls for 95% interval
+  # all data
+  scores_95 <- scores_i[i_95,]
+  hull_i <- chull(scores_95)
+  hull_i <- c(hull_i, hull_i[1])
+  lines(scores_95[hull_i,], col=cols[i], lwd=1.5)
+}
+
+# legend
+legend("top",ncol=4,legend = unique(gen),col = cols, lwd=1.5, cex=0.9,bg="white")
+
+
+
+png("/mnt/Hallgrimsson/Users/Jovid/DOMGP/figures/labXsex.png", height = 500, width = 750)
+barplot(table(DO.covars$DOSource, DO.covars$Sex), col = RColorBrewer::brewer.pal(5, "Blues"), ylim = c(0, 900), xlab = "Sex", ylab = "Sample size", cex.axis = 1.8, cex.lab = 1.8)
+legend("top", legend = c("Farber", "Jax1", "Jax2", "Munger", "Pollard"), horiz = T, col = RColorBrewer::brewer.pal(5, "Blues"), pch = 19, cex = 2)
+dev.off()
+
+png("/mnt/Hallgrimsson/Users/Jovid/DOMGP/figures/labXgen.png", height = 500, width = 750)
+barplot(table(DO.covars$DOSource, DO.covars$ngen), col = RColorBrewer::brewer.pal(5, "Blues"), ylim = c(0, 500), xlab = "Generation", ylab = "Sample size", cex.axis = 1.8, cex.lab = 1.8)
+legend("top", legend = c("Farber", "Jax1", "Jax2", "Munger", "Pollard"), horiz = T, col = RColorBrewer::brewer.pal(5, "Blues"), pch = 19, cex = 2)
+dev.off()
+
+```
+
+```{r removing effects of size and sex}
+
+#sex resids
+DO.resids <- group.resids
+
+g_agg <- aggregate(DO.resids, by=list(DO.covars$Sex),FUN="mean")
+g_means <- as.matrix(g_agg[,2:ncol(g_agg)])
+
+group.resids <- matrix(NA, nrow = nrow(DO.resids), ncol = ncol(DO.resids))
+for(i in 1:nrow(DO.resids)){
+  which.g <- match(DO.covars$Sex[i], g_agg[,1])
+  group.resids[i,] <- DO.resids[i,]-g_means[which.g,1:ncol(g_means)]
+}
+
+
+# do.mean <- DO.gpa$consensus
+do.mean <- DO.gpa$mshape
+
+gr.mean <- array(NA, dim = c(54,3,nrow(group.resids)))
+for(i in 1:nrow(group.resids)) gr.mean[,,i] <- arrayspecs(group.resids, 54, 3)[,,i] + do.mean
+
+#size resids
+DO.resids <- group.resids
+
+#multivariate regression instead of estimating group means for age
+# group.resids <- manova(DO.resids ~ DO.covars$MassSac)$res
+# 
+# gr.mean <- array(NA, dim = c(54,3,nrow(group.resids)))
+# for(i in 1:nrow(group.resids)) gr.mean[,,i] <- arrayspecs(group.resids, 54, 3)[,,i] + do.mean
+# 
+ Y <- two.d.array(gpagen(gr.mean)$coords)
+
+#alignment with mutants
+#preprocessing for process MGP####
+mutant.db <- read.csv("/mnt/Hallgrimsson/Users/Jovid/Adult_Mice_Landmarks.csv")
+
+mutant.lms <- mutant.db[,12:173]
+colnames(mutant.lms) <- NULL
+
+rearranged.lms <- cbind(mutant.lms[,94:162], mutant.lms[,70:93], mutant.lms[,1:69])
+#View(cbind(colnames(rearranged.lms), colnames(DO.pheno[,-1])[-LM.to.remove.cols]))
+
+#to fix: 28:33, 49:54, 121:126, 142:147
+#View(cbind(colnames(rearranged.lms[, c(1:27, 31:33, 28:30, 34:48, 52:54, 49:51, 55:120, 124:126, 121:123, 127:141, 145:147, 142:144, 148:162)]), colnames(DO.pheno[,-1])[-LM.to.remove.cols]))
+
+fixed.mutant.lms <- rearranged.lms[, c(1:27, 31:33, 28:30, 34:48, 52:54, 49:51, 55:120, 124:126, 121:123, 127:141, 145:147, 142:144, 148:162)]
+
+
+combo.lms <- matrix(NA, nrow = nrow(Y) + nrow(mutant.lms), ncol = ncol(Y))
+combo.lms[1:nrow(Y),] <- two.d.array(gr.mean)
+combo.lms[(nrow(Y) + 1):(nrow(Y) + nrow(mutant.lms)),] <- as.matrix(fixed.mutant.lms)
+
+r.combo.lms <- two.d.array(gpagen(arrayspecs(as.matrix(combo.lms), 54, 3))$coords)
+
+mutant.lms <- r.combo.lms[(nrow(Y) + 1):(nrow(Y) + nrow(mutant.lms)),]
+#save(Y, mutant.lms, mutant.db, fixed.do.mean, shape.mean, file = "~/shiny/Process_MGP/mutant_comparisons_allDO.Rdata")
+
+#save(r.combo.lms, file = "~/shiny/Process_MGP/combinedDO_et_mutants.Rdata") 
+
+giga.pca <- prcomp(Y)
+
+
+```
+
+
+#Plot two individuals after registration with sample mesh
+```{r mutant vs do shape, message=FALSE, warning=FALSE}
+
+mouse.ply <- file2mesh(filename = "/home/bhlab/shiny/DOMGP/Mouse Morph_remeshed_san.ply")
+consensus.skull <- read.table(file = "/mnt/Hallgrimsson/Users/Jovid/DOMGP/morph_lm.txt")
+
+
+shape.mean <- rotmesh.onto(mouse.ply, refmat = as.matrix(consensus.skull), tarmat = matrix(colMeans(Y), ncol = 3, byrow = T), scale = T, reflection = T)
+
+par3d(zoom = .65)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+# spheres3d(matrix(colMeans(r.combo.lms), ncol = 3, byrow = T), radius = .01, color = "red")
+
+points3d(arrayspecs(as.matrix(r.combo.lms), 54, 3)[,,1600])
+points3d(arrayspecs(as.matrix(r.combo.lms), 54, 3)[,,1], col = 2)
+rglwidget()
+
+Y <- two.d.array(gr.mean)
+mutant.lms <- r.combo.lms[(nrow(Y) + 1):(nrow(Y) + nrow(mutant.lms)),]
+#save(Y, mutant.lms, mutant.db, fixed.do.mean, shape.mean, file = "~/shiny/Process_MGP/mutant_comparisons_allDO.Rdata")
+
+#save(r.combo.lms, file = "~/shiny/Process_MGP/combinedDO_et_mutants.Rdata") 
+
+```
+
+
+```{r kinship adjustment pca, include=FALSE}
+#regress effects of relatedness in the same way DOQTL does
+DO.lms <- matrix(0, nrow = nrow(DO.resids), ncol = ncol(DO.resids))
+twod.pheno <- prcomp(two.d.array(DO.pheno))
+narrow.h2 <- matrix(NA, nrow = 162, ncol = 2)
+for(i in 1:162){
+  err.cov = NULL
+  mod = NULL
+  # Force the variance component estimates to be positive.
+   mod = regress::regress(giga.pca$x[,i] ~ DO.covars$Sex + DO.covars$AgeSac, ~DO.K, pos = c(TRUE, TRUE))
+  # mod = regress::regress(twod.pheno$x[,i] ~ DO.covars$Sex + DO.covars$AgeSac, ~DO.K, pos = c(TRUE, TRUE))
+
+  err.cov = mod$sigma[1] * DO.K + mod$sigma[2] * diag(nrow(Y))
+
+  narrow.h2[i,1] <- mod$sigma[1]
+  narrow.h2[i,2] <- sum(mod$sigma)
+  # #Invert the covariance matrix.
+  # eW = eigen(err.cov, symmetric = TRUE)
+  # if (min(eW$values) < 0 && abs(min(eW$values)) > sqrt(.Machine$double.eps)) {
+  #   stop("Jovid says: W is not positive definite")
+  # } else {
+  #   eW$values[eW$values <= 0] = Inf
+  # } # else
+  # err.cov = eW$vector %*% diag(eW$values^-0.5) %*% t(eW$vector)
+  # rm(eW)
+
+  #corrected data
+  DO.lms[,i] = err.cov %*% giga.pca$x[,i]
+  #DO.lms[,i] <- mod$predicted
+  if(i%%20 == 0) print(i/162)
+}
+
+```
+
+How much variation is lost from the original sample by adjusting for relatedness?
+```{r relatedness variation component}
+
+h2 <- rep(NA, 162)
+#varying number of pcs corrected for kinship and seeing how much of the total variation that eats up
+for(k in 1:162){
+n.pcs <- k
+k.lms <- matrix(0, nrow = nrow(DO.resids), ncol = ncol(DO.resids))
+
+for(i in 1:nrow(DO.resids)){
+  tmp.lm <- 0
+  for(j in 1:n.pcs) tmp.lm <- tmp.lm + DO.lms[i,j] * twod.pheno$rotation[,j]
+  if(k != 162) for(j in (n.pcs + 1):ncol(twod.pheno$rotation)) tmp.lm <- tmp.lm + twod.pheno$x[i,j] * twod.pheno$rotation[,j]
+ k.lms[i,] <- tmp.lm + twod.pheno$center
+}
+
+# h2[k] <-  1 - sum(diag(cov(k.lms)))/sum(diag(cov(r.combo.lms[1:nrow(Y),])))
+h2[k] <-  1 - sum(diag(cov(k.lms)))/sum(diag(cov(two.d.array(DO.pheno))))
+}
+
+h2
+```
+
+We've now determined a good number of pcs to account for, let's save that progress and register it with the mutants
+```{r register adjusted data with mutant database}
+
+k=1
+n.pcs <- k
+k.lms <- matrix(0, nrow = nrow(DO.resids), ncol = ncol(DO.resids))
+
+for(i in 1:nrow(DO.resids)){
+  tmp.lm <- 0
+  for(j in 1:n.pcs) tmp.lm <- tmp.lm + DO.lms[i,j] * giga.pca$rotation[,j]
+  if(k != 162) for(j in (n.pcs + 1):ncol(giga.pca$rotation)) tmp.lm <- tmp.lm + giga.pca$x[i,j] * giga.pca$rotation[,j]
+ k.lms[i,] <- tmp.lm + giga.pca$center
+}
+
+combo.lms.test <- r.combo.lms
+combo.lms.test[1:nrow(DO.resids),] <- k.lms
+r.combo.lms.test <- gpagen(arrayspecs(combo.lms.test, 54, 3))
+
+```
+
+How different are the landmarks post adjustment per individual?
+```{r assessing landmark adjustment}
+lm.diff <- rep(NA, nrow(DO.resids))
+
+r.combo.lms3d <- row2array3d(r.combo.lms)
+
+for(ind in 1:nrow(DO.resids)){
+lm.diff[ind] <- sum(sqrt((r.combo.lms.test$coords[,,ind] - r.combo.lms3d[,,ind])^2))
+}
+
+#png(filename = "postKdiffs_withgen_adjustment.png", width = 600, height = 450)
+hist(lm.diff, main = "Pairwise shape difference pre/post kinship", xlab = "Procrustes distance")
+#dev.off()
+
+ind = which.max(lm.diff)
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(matrix(colMeans(r.combo.lms), ncol = 3, byrow = T), radius = .001, color = "red")
+ #points3d(r.combo.lms.test$coords[,,1200], col = 3)
+ points3d(r.combo.lms.test$coords[,,ind], col = 4)
+points3d(row2array3d(r.combo.lms)[,,ind], col = 1)
+rglwidget()
+
+```
+
+
+#Multivariate genotype phenotype mapping
+
+#Process mapping
+
+#Visualization
+
+##Results
+#Heritability of shape
+#My attempt to use the kinship matrix to adjust landmarks for relatedness
+```{r univariate heritability, message=FALSE, warning=FALSE}
+
+
+Y <- Y[-c(893,876),]
+DO.K <- DO.K[-c(893,876),-c(893,876)]
+sex <- DO.covars$Sex[-c(893,876)]
+
+DO.lms <- matrix(0, nrow = nrow(Y), ncol = ncol(Y))
+
+for(i in 1:162){
+  
+  mod = NULL
+  # Force the variance component estimates to be positive.
+  
+   mod = regress::regress(Y[,i] ~ sex, ~DO.K, pos = c(TRUE, TRUE))
+  # mod = regress::regress(Y[,i] ~ sex, pos = c(TRUE, TRUE))
+
+  
+  DO.lms[,i] <- mod$predicted
+  print(i)
+  
+  }
+
+#percent var remaining after relatedness adjustment: 33% of sex & gen adjusted variance
+sum(diag(cov(DO.lms)))/sum(diag(cov(Y)))
+#percent var remaining after K, Gen, and Sex adjustmant: 25% original variance
+sum(diag(cov(DO.lms)))/sum(diag(cov(two.d.array(DO.pheno))))
+
+```
+
+
+```{r multivariate heritability estimation}
+
+library(EMMREML)
+
+cumsum(giga.pca$sdev/sum(giga.pca$sdev))
+
+H2_emm <- emmremlMultivariate(Y = t(giga.pca$x[,1:5]), X = t(as.numeric(DO.covars$Sex)), K = DO.K, Z = diag(rep(1, nrow(DO.K))))
+
+#can't fit model because of ram limitations
+
+```
+
+#Whole genome MGP
+This is the code to estimate the WGMGP based on PLS
+```{r WGPLS calculation with cv parameter optimization}
+
+#Kinship adjusted: Y <- two.d.array(r.combo.lms.test$coords[,,1:nrow(DO.resids)])
+
+probs.rows <- matrix(NA, nrow = dim(DO.probs)[1], ncol = 8 * dim(DO.probs)[3])
+
+for(ind in 1:dim(DO.probs)[1]){
+  probs.rows[ind,] <- as.numeric(DO.probs[ind,,])
+}
+
+rm(DO.probs)
+gc()
+
+#from the future...observations 893 & 876 are pretty big phenotypic outliers. Let's try removing them from the MGP
+Y <- Y[-c(893,876),]
+probs.rows <- probs.rows[-c(893,876),]
+DO.K <- DO.K[-c(893,876),-c(893,876)]
+
+# save(Y, probs.rows, file = "mddsPLS_WG_data.Rdata")
+
+giga.pca <- prcomp(Y)
+
+#proposed in the original MGP paper as a kinship correction
+#probs.rows <- t(t(probs.rows) %*% DO.K)
+#start from here for small memory footprint:
+# load("mddsPLS_WG_data.Rdata")
+#here's the sparse PLS implementation
+nfolds <- 2
+fold.assignments <- caret::createFolds(1:nrow(Y), k = nfolds, list = F)
+lambdas <- c(.04, .08)
+fold.error <- matrix(NA, nrow = nfolds, ncol = length(lambdas))
+colnames(fold.error) <- lambdas
+for(j in 1:length(lambdas)){
+for(i in 1:nfolds){
+sparse.betas <- mddsPLS(Xs = probs.rows[fold.assignments != i,], Y = Y[fold.assignments != i,], R = 1, lambda = lambdas[j])
+
+fold.pred <- predict(sparse.betas, probs.rows[fold.assignments == i,])
+
+fold.error[i,j] <- sqrt(sum(rowMeans((fold.pred - Y[fold.assignments == i,])^2))) + sum(lambdas[j] * sparse.betas$mod$u[[1]])
+
+rm(sparse.betas)
+gc()
+
+if(i == 1){
+plot(density(sqrt(rowMeans((fold.pred - Y[fold.assignments == i,])^2))), xlab = "RMSE", ylab = "Frequency", main = paste0("Lambda: ", lambdas[j]), type = "n")
+}
+
+polygon(density(sqrt(rowMeans((fold.pred - Y[fold.assignments == i,])^2))), col = adjustcolor(i, alpha.f=0.3))
+
+print(paste0("Sparsity parameter ", lambdas[j], ", fold ", i, " rmse: ", fold.error[i,j]))
+}
+  if(j == length(lambdas) & i == nfolds){
+    wwcd <- lambdas[which.min(colMeans(fold.error))]
+    sparse.betas <- mddsPLS(Xs = probs.rows, Y = Y, R = 20, lambda = wwcd)
+  } 
+}
+#I chose 20 components because 20 pcs encompasses approximately 50% of the variance in the data
+#save(betas, file = "/home/bhlab/shiny/DOMGP/pls_combinedmuga.Rdata")
+#results are weird, saved to fold_error.csv
+#.06 looks like the best parameter
+
+
+```
+
+
+New \lambda optimization idea...what if we look at the slope of MSE ~ \lambda and stop at the inflection point
+```{r CV optimization based on regularization MSE tradeoff}
+library(ddsPLS)
+#start from here for small memory footprint:
+load("mddsPLS_WG_data.Rdata")
+
+lambdas <- c(.07, .075, .08, .085, .09)
+
+lambda.mse <- rep(NA, nrow = length(lambdas))
+lambda.zeros <- rep(NA, nrow = length(lambdas))
+
+for(j in 2:length(lambdas)){
+
+  sparse.betas <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = lambdas[j])
+  
+  full.pred <- predict(sparse.betas, probs.rows)
+  
+  # save(sparse.betas, full.pred, file = paste0("models/lambda", c("_04", "_05", "_06", "_07", "_08", "_09", "_10")[j], ".Rdata"))
+  
+  lambda.zeros[j] <- sum(round(sparse.betas$mod$u[[1]], digits = 5) == 0)
+  
+   rm(sparse.betas)
+  gc()
+  
+  lambda.mse[j] <- sum(diag(cov(full.pred))) / sum(diag(cov(Y)))
+  
+  # plot(lambda.mse)
+  
+  print(paste0("Sparsity parameter ", lambdas[j], "; Variance explained: ", lambda.mse[j]))
+  }
+
+
+#best lambda for full dataset: .07, for V_a: .06 
+png("/mnt/Hallgrimsson/Users/Jovid/DOMGP/figures/mseXsparsity.png", width = 700, height = 500)
+plot((lambda.zeros/ncol(probs.rows)), lambda.mse, typ = "p", pch = 19, ylab = "MSE", xlab = "Proportion of zeroed genotype coefficients", ylim = c(.015, .055))
+text((lambda.zeros/ncol(probs.rows)), lambda.mse, labels = lambdas, pos = 1)
+dev.off()
+
+write.csv(cbind(lambdas, lambda.mse, lambda.zeros), "mseXsparsity_tradeoff.csv", row.names = F)
+
+```
+
+
+Since we get a low dimensional representation, we can calculate the R^2 of the scores between blocks. We can probably also ask how much of the variance in this multivariate trait is heritable.
+```{r variance and heritability}
+
+#Variance captured by whole genome sparse approach?
+sparse.betas <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .06)
+
+k.sparse.betas <- mddsPLS(Xs = probs.rows, Y = DO.lms, R = 1, lambda = .085)
+
+k.full.pred <- predict(k.sparse.betas, probs.rows)
+
+save(k.sparse.betas, k.full.pred, file = "models/k_sparsebetas_85_K_1.Rdata")
+# 
+# load("models/sparsebetas_85_K_10.Rdata")
+
+#10 dimensions explains 14.6% of the heritable variation
+sum(diag(cov(full.pred))) / (sum(diag(cov(Y))) + sum(diag(cov(full.pred))))
+
+```
+
+```{r comparing h2 and unadjusted effects}
+#best V_a model, then best unadjusted model
+load("models/ksparsebetas_85_K_1.Rdata")
+
+load("models/sparsebetas_85_K_10.Rdata")
+#cor is .59
+cor(sparse.betas$mod$u[[1]][,1], k.sparse.betas$mod$u[[1]])
+
+#phenotype correlation: .65
+cor(sparse.betas$mod$v[,1], k.sparse.betas$mod$v)
+
+```
+
+
+
+```{r test set phenotype residuals vs predicted}
+
+
+par3d(zoom = .65)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+
+aspect3d("iso")
+
+
+for(j in 1:dim(fold.pred)[1]) points3d(matrix(fold.pred[j,], nrow = 54, ncol = 3, byrow = T), col = 2)
+for(j in 1:dim(fold.pred)[1]) points3d(matrix(Y[fold.assignments == i,][j,], nrow = 54, ncol = 3, byrow = T), col = 1, alpha = .05)
+
+
+rglwidget()
+
+
+
+```
+
+
+Here's the predicted shapes for the full set relative to the actual shape.
+```{r full set phenotype residuals vs predicted}
+
+par3d(zoom = .65)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+
+aspect3d("iso")
+
+for(j in 1:dim(full.pred)[1]) points3d(matrix(full.pred[j,], nrow = 54, ncol = 3, byrow = T), col = 2)
+for(j in 1:dim(full.pred)[1]) points3d(matrix(Y[j,], nrow = 54, ncol = 3, byrow = T), col = 1, alpha = .05)
+
+rglwidget()
+```
+
+
+
+This visualization lets you select an observation in the test set and see how far away the model is from the actual shape
+```{r test set phenotype error vectors}
+
+par3d(zoom = .65)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+
+#spheres3d(row2array3d(colMeans(Y), Nlandmarks = 54), radius = .001, color = "red")
+
+aspect3d("iso")
+
+#test set errors: 
+#plot(sqrt(rowMeans((fold.pred - Y[fold.assignments == nfolds,])^2)), typ = "l")
+
+#best pred: 143
+#worst pred: 127
+
+ind = 2
+
+tmp.fold.pred <- matrix(fold.pred[ind,], nrow = 54, ncol = 3, byrow = T)
+tmp.Y <- matrix(Y[fold.assignments == nfolds,][ind,], nrow = 54, ncol = 3, byrow = T)
+
+# #mean to prediction
+# for(i in 1:54) arrow3d(do.mean[i,], tmp.fold.pred[i,], type = "lines", col = "red", barblen = 0, lwd = 2.5)
+# #mean to actual shape
+# for(i in 1:54) arrow3d(do.mean[i,], tmp.Y[i,], type = "lines", col = "black", barblen = 0, lwd = 2.5, alpha = .8)
+#prediction to actual
+for(i in 1:54) arrow3d(tmp.fold.pred[i,], tmp.Y[i,], type = "lines", col = "black", barblen = 0, lwd = 2.5, alpha = .8)
+
+rglwidget()
+
+```
+
+Another way of understanding the error is to project the model predictions into PC space
+```{r project model into PCA space}
+giga.pca <- prcomp(Y)
+
+mod.proj <- full.pred %*% giga.pca$rotation
+
+plot(mod.proj[,1] ~ giga.pca$x[,1])
+
+cor.test(mod.proj[,1], giga.pca$x[,1])
+text(mod.proj[,1], giga.pca$x[,1], labels = 1:nrow(Y))
+
+```
+
+
+Here's how we can visualize the marker effects by founder
+```{r non-regularized pls code and vizualization}
+ 
+# pls.betas <- pls2B(x = probs.rows, y = Y)
+# pls.betas$svd$d <- pls.betas$svd$d[1:15]
+# pls.betas$svd$u <- pls.betas$svd$u[,1:15]
+# pls.betas$svd$v <- pls.betas$svd$v[,1:15]
+# pls.betas$x <- pls.betas$x[,1:15]
+# 
+# betas <- list(d = as.matrix(pls.betas$svd$d), u = as.matrix(pls.betas$svd$u), v = as.matrix(pls.betas$svd$v), yscore = as.matrix(pls.betas$Yscores[,1:15]))
+
+#define colors and names
+     
+    do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0") 
+    do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+
+     #plot loadings for all category
+   marker.index <- rbind(rep(combined.markers$chr, each = 8), rep(combined.markers$pos, each = 8))
+
+    chromosome <- 6
+    mgp.dim <- 1
+   
+   #create founder dataframe
+   founder.df <- NULL
+   for(i in 1:8){
+     sorting.id <- sort(as.numeric(marker.index[2, which(marker.index[1,] == chromosome)][seq(i, length(which(marker.index[1,] == chromosome)), 8)]), index.return = T)
+     founder.df <- rbind(founder.df, cbind(betas$u[marker.index[1,] == chromosome, mgp.dim][seq(i, length(which(marker.index[1,] == chromosome)), 8)][sorting.id$ix], sorting.id$x, do.names[i]))
+   }
+ 
+   founder.df <- data.frame(score = as.numeric(founder.df[,1]), pos = as.numeric(founder.df[,2]), Founder = founder.df[,3])
+   p <- ggplot(data= founder.df, aes(x=pos, y=score, colour = Founder)) +
+     geom_line(size = .45) +
+     scale_colour_manual(values=do.colors) +
+     xlab(paste0("Chromosome ", chromosome," postion (Mb)")) + 
+     ylab("Genetic coefficient") +
+     theme_classic()  
+   
+  ggplotly(p)
+  
+  
+giga.pca <- prcomp(Y)
+proj.pca1 = row2array3d(min(giga.pca$x[,1]) * giga.pca$rotation[,1] + colMeans(Y), Nlandmarks = 54)
+proj.pca2 = row2array3d(max(giga.pca$x[,1]) * giga.pca$rotation[,1] + colMeans(Y), Nlandmarks = 54)
+
+#save(proj.pca1, proj.pca2, file = "~/shiny/Process_MGP/comboPCA_projections.Rdata") 
+#rotmesh into new aligned space DO mean
+fixed.do.mean <- gpa.gdf$consensus
+mouse.ply <- file2mesh(filename = "/home/bhlab/shiny/DOMGP/Mouse Morph_remeshed_san.ply")
+shape.mean <- rotmesh.onto(mouse.ply, refmat = as.matrix(consensus.skull), tarmat = as.matrix(fixed.do.mean), scale = T, reflection = T)
+
+par3d(zoom = .65)
+
+#vectors from DO mean to mutant    
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .001, color = "red")
+
+
+proj.coords.a1 = row2array3d(min(pls.betas$Yscores[,1]) * pls.betas$svd$v[,1] + as.numeric(t(fixed.do.mean)), Nlandmarks = 54)
+proj.coords.a2 = row2array3d(max(pls.betas$Yscores[,1]) * pls.betas$svd$v[,1] + as.numeric(t(fixed.do.mean)), Nlandmarks = 54)   
+
+proj.pca1 = row2array3d(min(giga.pca$x[,1]) * giga.pca$rotation[,1] + colMeans(Y), Nlandmarks = 54)
+proj.pca2 = row2array3d(max(giga.pca$x[,1]) * giga.pca$rotation[,1] + colMeans(Y), Nlandmarks = 54)
+
+
+for(i in 1:54) arrow3d(proj.coords.a1[i,], proj.coords.a2[i,], type = "lines", col = "black", barblen = 0, lwd = 2.5)
+for(i in 1:54) arrow3d(proj.pca1[i,], proj.pca2[i,], type = "lines", col = "red", barblen = 0, lwd = 2.5)
+
+rglwidget()
+
+#cor(giga.pca$rotation[,1], pls.betas$svd$v[,1])
+```
+
+Below we show the results of sparse whole-genome PLS. Genetic coefficients denote the strength of association in a region with the phenotype. Each chromosome plot is scaled to the whole genome range of effects. Genetic effects for each founder are colored according to the legend. The regions with largest effects are on chromosome 1 at ~175 Mb, chromosome 15 at ~10 Mb, and chromosome 19 at ~38 Mb. (Mention which founders?)
+```{r summed Sparse csome plots, echo=FALSE, message=FALSE, warning=FALSE}
+
+#save(sparse.betas, file = "~/shiny/sparse_DOMGP/betas.Rdata")
+
+# sparse.betas <- mddsPLS(Xs = probs.rows, Y = Y, R = 10, lambda = .085)
+
+#define colors and names
+    do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0") 
+    do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+
+     #plot loadings for all category
+   marker.index <- rbind(rep(combined.markers$chr, each = 8), rep(combined.markers$Mbp_mm10, each = 8))
+
+
+for(j in c(1:19, 21)){
+   chromosome <- j
+    mgp.dim <- 10
+   
+   #create founder dataframe
+   founder.df <- NULL
+   for(i in 1:8){
+     sorting.id <- sort(as.numeric(marker.index[2, which(marker.index[1,] == chromosome)][seq(i, length(which(marker.index[1,] == chromosome)), 8)]), index.return = T)
+     founder.df <- rbind(founder.df, cbind(score = rowSums(sparse.betas$mod$u[[1]][marker.index[1,] == chromosome, 1:mgp.dim][seq(i, length(which(marker.index[1,] == chromosome)), 8),][sorting.id$ix,]), sorting.id$x, do.names[i]))
+   }
+ 
+   assign(paste0("founder.df_", levels(combined.markers$chr)[chromosome]), data.frame(score = as.numeric(founder.df[,1]), pos = as.numeric(founder.df[,2]), Founder = founder.df[,3]))
+  
+   # png(filename = paste0("WGMGP_loadings/chromosome", levels(combined.markers$chr)[chromosome], ".png"), height = 600, width = 900)  
+  assign(paste0("p_", levels(combined.markers$chr)[chromosome]), ggplot(data= get(paste0("founder.df_", levels(combined.markers$chr)[chromosome])), aes(x=pos, y=score, colour = Founder)) +
+     geom_line(size = .65) +
+     ylim(range(rowSums(sparse.betas$mod$u[[1]][,1:mgp.dim]))) +
+     scale_colour_manual(values=do.colors) +
+     xlab(paste0("Chromosome ", levels(combined.markers$chr)[chromosome]," postion (Mb)")) + 
+     ylab("Genetic marker loading") +
+     theme_classic() + 
+     theme(axis.text=element_text(size=20), axis.title=element_text(size=22, face = "bold"), legend.text=element_text(size=17), legend.title =element_text(size=17), legend.position="top", legend.box = "horizontal"))
+   
+  print(get(paste0("p_", levels(combined.markers$chr)[chromosome])))
+  
+  
+   # save(test, file = "ggplot_test.Rdata")
+   # dev.off()
+}
+```
+
+Zooming into regions of interest
+```{r annotation tracks}
+
+levels(combined.markers$chr)
+marker.index <- rbind(rep(combined.markers$chr, each = 8), rep(combined.markers$Mbp_mm10, each = 8))
+mouse <- useMart(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+
+for(j in c(1:19)){
+chromosome <- j
+mgp.dim <- 10
+
+#create founder dataframe
+founder.df <- NULL
+for(i in 1:8){
+  sorting.id <- sort(as.numeric(marker.index[2, which(marker.index[1,] == chromosome)][seq(i, length(which(marker.index[1,] == chromosome)), 8)]), index.return = T)
+  founder.df <- rbind(founder.df, cbind(score = rowSums(sparse.betas$mod$u[[1]][marker.index[1,] == chromosome, 1:mgp.dim][seq(i, length(which(marker.index[1,] == chromosome)), 8),][sorting.id$ix,]), sorting.id$x, do.names[i]))
+}
+
+founder.df <- data.frame(score = as.numeric(founder.df[,1]), pos = as.numeric(founder.df[,2]), Founder = founder.df[,3])
+
+
+roi <- founder.df$pos[which.max(abs(founder.df$score))]
+
+
+#plot results 
+library(Gviz)
+
+gtr <- GenomeAxisTrack(cex = 1.5)
+itr <- IdeogramTrack(genome = "mm10", chromosome = paste0("chr",levels(combined.markers$chr)[chromosome]), cex = 1.3)
+
+start.spot <- roi - .1
+end.spot <- roi + .1
+
+atr <- BiomartGeneRegionTrack(genome = "mm10", chromosome = levels(combined.markers$chr)[chromosome], start = start.spot*1e6, end = end.spot*1e6, name = "ENSEMBL", collapseTranscripts = "meta", biomart = mouse, cex.axis = 2, cex = 4)
+
+fdf <- data.frame(chr = paste0("chr",levels(combined.markers$chr)[chromosome]), start = founder.df[founder.df$pos > start.spot-1 & founder.df$pos < end.spot+.5 & founder.df$Founder == "NZO/HlLtJ",2] * 1e6, end = (founder.df[founder.df$pos > start.spot-1 & founder.df$pos < end.spot+.5 & founder.df$Founder == "NZO/HlLtJ",2] * 1e6) + 1e4, score = matrix(founder.df[founder.df$pos > start.spot-1 & founder.df$pos < end.spot+.5,1], nrow = length(founder.df[founder.df$pos > start.spot-1 & founder.df$pos < end.spot+.5 & founder.df$Founder == "NZO/HlLtJ",1])))
+
+test.fdf <- makeGRangesFromDataFrame(fdf, keep.extra.columns = T)
+
+# dtr <- DataTrack(start = fdf[,2] * 1e6, width = 1, data = fdf[,1], genome = "mm9", name = "test", type = "p")
+dtr <- DataTrack(test.fdf, genome = "mm10", name = "Genetic loading", col = do.colors, cex.axis = 1, cex = 1)
+
+# symbols <- unique(atr@range@elementMetadata@listData$symbol)
+# atr2 <- BiomartGeneRegionTrack(genome = "mm9", name = "ENSEMBL", filters=list(with_mgi=T))
+
+ png(filename = paste0("WGMGP_loadings/chromosome", levels(combined.markers$chr)[chromosome], "_ano.png"), height = 500, width = 750)  
+plotTracks(list(itr, gtr, dtr,atr), transciptionAnnotation = "transcript", showId = T, groups = levels(factor(do.names)), type = c("p"), legend = F, shape = "box", cex.group = 1.3)
+
+ dev.off()
+}
+
+
+```
+
+
+
+```{r one axis Sparse csome plots, echo=FALSE, message=FALSE, warning=FALSE}
+# sparse.betas <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .05)
+#save(sparse.betas, file = "~/shiny/sparse_DOMGP/betas.Rdata")
+
+#define colors and names
+    do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0") 
+    do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+
+     #plot loadings for all category
+   marker.index <- rbind(rep(combined.markers$chr, each = 8), rep(combined.markers$Mbp_mm10, each = 8))
+
+
+for(j in c(1:19, 21)){
+   chromosome <- j
+    mgp.dim <- 1
+   
+   #create founder dataframe
+   founder.df <- NULL
+   for(i in 1:8){
+     sorting.id <- sort(as.numeric(marker.index[2, which(marker.index[1,] == chromosome)][seq(i, length(which(marker.index[1,] == chromosome)), 8)]), index.return = T)
+     founder.df <- rbind(founder.df, cbind(score = sparse.betas$mod$u[[1]][marker.index[1,] == chromosome, mgp.dim][seq(i, length(which(marker.index[1,] == chromosome)), 8)][sorting.id$ix], sorting.id$x, do.names[i]))
+   }
+ 
+   founder.df <- data.frame(score = as.numeric(founder.df[,1]), pos = as.numeric(founder.df[,2]), Founder = founder.df[,3])
+   
+   p <- ggplot(data= founder.df, aes(x=pos, y=score, colour = Founder)) +
+     geom_line(size = .45) +
+     ylim(range(sparse.betas$mod$u[[1]])) +
+     scale_colour_manual(values=do.colors) +
+     xlab(paste0("Chromosome ", levels(combined.markers$chr)[chromosome]," postion (Mb)")) + 
+     ylab("Genetic marker loading") +
+     theme_classic()  
+   
+  print(p)
+}
+```
+
+```{r dimension effects}
+
+  do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0") 
+    do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+
+     #plot loadings for all category
+   marker.index <- rbind(rep(combined.markers$chr, each = 8), rep(combined.markers$Mbp_mm10, each = 8))
+
+
+for(j in c(1:20)){
+   chromosome <- 1
+    mgp.dim <- j
+   
+   #create founder dataframe
+   founder.df <- NULL
+   for(i in 1:8){
+     sorting.id <- sort(as.numeric(marker.index[2, which(marker.index[1,] == chromosome)][seq(i, length(which(marker.index[1,] == chromosome)), 8)]), index.return = T)
+     founder.df <- rbind(founder.df, cbind(score = sparse.betas$mod$u[[1]][marker.index[1,] == chromosome, mgp.dim][seq(i, length(which(marker.index[1,] == chromosome)), 8)][sorting.id$ix], sorting.id$x, do.names[i]))
+   }
+ 
+   founder.df <- data.frame(score = as.numeric(founder.df[,1]), pos = as.numeric(founder.df[,2]), Founder = founder.df[,3])
+   
+   p <- ggplot(data= founder.df, aes(x=pos, y=score, colour = Founder)) +
+     geom_line(size = .45) +
+     ylim(range(sparse.betas$mod$u[[1]])) +
+     scale_colour_manual(values=do.colors) +
+     xlab(paste0("Chromosome ", levels(combined.markers$chr)[chromosome]," postion (Mb)")) + 
+     ylab("Genetic coefficient") +
+     theme_classic()  
+   
+  print(p)
+}
+
+```
+
+
+
+#Correlation of WGMGP and PC1
+
+Phenotype with sparse PLS
+```{r phenotype and cor(sPLS|PC1)}
+
+k.pca <- princomp(Y)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(row2array3d(colMeans(Y), Nlandmarks = 54), radius = .001, color = "red")
+
+
+#add all inds to plot
+#for(i in 1:997) points3d(row2array3d(Y)[,,i])
+
+proj.pca1 <- row2array3d((min(k.pca$scores[,1]) * k.pca$loadings[,1] + k.pca$center), Nlandmarks = 54)
+proj.pca2 <- row2array3d((max(k.pca$scores[,1]) * k.pca$loadings[,1] + k.pca$center), Nlandmarks = 54)
+
+# proj.coords.a1 = row2array3d(min((Y %*% sparse.betas$mod$v)[,1]) * sparse.betas$mod$v[,1] + colMeans(Y), Nlandmarks = 54)
+# proj.coords.a2 = row2array3d(max((Y %*% sparse.betas$mod$v)[,1]) * sparse.betas$mod$v[,1]+ colMeans(Y), Nlandmarks = 54)
+
+# proj.coords.a1 = row2array3d(min(sparse.betas$mod$s[,1])/324 * sparse.betas$mod$v[,1] + colMeans(Y), Nlandmarks = 54)
+# proj.coords.a2 = row2array3d(max(sparse.betas$mod$s[,1])/324 * sparse.betas$mod$v[,1]+ colMeans(Y), Nlandmarks = 54)
+
+proj.coords.a1 <- row2array3d(predict(sparse.betas, probs.rows[c(which.min(sparse.betas$mod$s[,1]), which.max(sparse.betas$mod$s[,1])),]), Nlandmarks = 54)
+ proj.coords.a2 <- proj.coords.a1[,,2]
+ proj.coords.a1 <- proj.coords.a1[,,1]
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (2 - 1), type = "lines", col = "black", barblen = 0.005, lwd = 3)
+#for(i in 1:54) arrow3d(proj.pca1[i,], proj.pca2[i,], type = "lines", col = "red", barblen = 0, lwd = 2.5)
+
+#include red vectors for kinship adjusted phenotype
+ proj.coords.a1 <- row2array3d(predict(k.sparse.betas, probs.rows[c(which.min(k.sparse.betas$mod$s[,1]), which.max(k.sparse.betas$mod$s[,1])),]), Nlandmarks = 54)
+ proj.coords.a2 <- proj.coords.a1[,,2]
+ proj.coords.a1 <- proj.coords.a1[,,1]
+
+# for(i in 1:54) arrow3d(proj.coords.a1[i,], proj.coords.a2[i,] + (proj.coords.a2[i,] - proj.coords.a1[i,]) * (2 - 1), type = "lines", col = "red", barblen = 0.005, lwd = 3)
+ 
+rglwidget()
+
+#cor to PC1
+cor(k.pca$loadings[,1], sparse.betas$mod$v[,1])
+
+#cor to ontogeneic allometry
+# cor(CAC(arrayspecs(Y,54,3), size = DO.covars$CS[-c(893,876)])$CAC, sparse.betas$mod$v[,1]) 
+# 
+# #cor to sex
+# sex.vec <- manova(two.d.array(DO.pheno)[-c(893,876),] ~ DO.covars$Sex[-c(893,876)])$coefficients
+# cor(sex.vec[1,] - sex.vec[2,], sparse.betas$mod$v[,1]) 
+
+
+```
+
+#Sparse PLS outcomes
+
+
+If this is the right way to think about it, then it suggests that snps explain ~55% of the variation in shape and ~75% of that is heritable. 
+
+The top 100 peaks in the whole genome are shown in table 1.
+```{r top 100 annotations}
+
+snp.search <- combined.markers[rep(1:nrow(combined.markers), each = 8), 1:3]
+
+snp.search[order(abs(sparse.betas$mod$u[[1]]), decreasing = T)[1:100],]
+
+
+MGI <- read.delim("~/Documents/tmp_R/MGI.sorted.txt", skip = 28, header = F)
+DO.go <- read.delim("/mnt/Hallgrimsson/Users/Jovid/DOMGP/go_terms.mgi", header=FALSE)
+DO.go2 <- read.delim("/mnt/Hallgrimsson/Users/Jovid/DOMGP/gene_association.mgi", header=FALSE, skip = 25)
+
+colnames(DO.go2) <- c("DB", "DB Object ID", "DB Object Symbol", "Qualifier", "GO ID", "DB:Reference(s)", "Evidence Code", "With (or)From", "Aspect", "DB Object Name", "DB Object Synonym(s)", "DB Object Type", "Taxon", "Date", "Annotation Extension", "Gene Product Form ID")
+
+i = 1
+
+#indexing is easier with characters because factors need the same number of levels to be compared in R
+DO.go[,2] <- as.character(DO.go[,2])
+DO.go2[,5] <- as.character(DO.go2[,5])
+
+#each go id has a unique functional term
+#select all genes with i process annotation
+#we can select the annotation id directly in do.go2, we just need to reference do.go when we want to know the functional annotation
+DO.go2[DO.go2[,5] == unique(DO.go2[,5])[i],]
+
+#annotation associated with this set of genes
+DO.go[DO.go[,2] == unique(DO.go2[,5])[i],]
+
+#seems much faster, from stackoverflow:https://stackoverflow.com/questions/16820773/r-smallest-distance-between-an-element-of-vector-a-and-an-element-of-vector-b
+closest.marker <- NULL
+cm.chr <- NULL
+sorted.marker.sums <- NULL
+for(i in 1:19){
+a = (MGI[MGI[,1] == i & MGI[,3] == "gene" & MGI[,2] == "MGI", 4]/10e5)
+b = snp.search$Mbp_mm10[snp.search$chr == i]
+combos = (abs(outer(a, b, "-")))
+
+#for each MGI annotated gene, what is the nearest snp marker in the DO array?
+closest.marker <- c(closest.marker, apply(combos, MARGIN = 1, FUN = which.min))
+cm.chr <- c(cm.chr, rep(i, length(apply(combos, MARGIN = 1, FUN = which.min))))
+
+#here are the genetic coefficient values of the nearest marker assigned to each corresponding gene
+
+sorted.marker.sums <- rbind.data.frame(sorted.marker.sums, data.frame(abs(sparse.betas$mod$u[[1]])[snp.search$chr == i][closest.marker[cm.chr == i]], a, MGI[MGI[,1] == i & MGI[,3] == "gene" & MGI[,2] == "MGI", 9]))
+
+print(i)
+}
+
+colnames(sorted.marker.sums) <- c("Genetic coefficient", "Pos (MB)", "Nearest reference")
+
+#fix the names of column 3
+sorted.marker.sums[,3] <- paste0("MGI:", unlist(strsplit(as.character(sorted.marker.sums[,3]), split = "MGI:MGI:"))[seq(2, length(sorted.marker.sums[,3]), 2)])
+
+
+MGI.db <- read.table( "/home/bhlab/shiny/Process_MGP/MGI_small.txt")
+
+gene.names <- as.character(MGI.db[grep(MGI.db[,9], pattern = paste(sorted.marker.sums[order(sorted.marker.sums[,1], decreasing = T),3][1:10], collapse = "| ")),10])
+
+
+gene.names <- rep(NA, 100)
+for(i in 1:100){
+  gene.names[i] <-  as.character(MGI.db[grep(MGI.db[,9], pattern = sorted.marker.sums[order(sorted.marker.sums[,1], decreasing = T),3][1:100][i]),10])
+}
+
+gene.names
+```
+
+
+
+#Process Multivariate Genotype-Phenotype mapping
+
+The scale of MGP mapping is arbitrary. We often measure genetic effects at the whole genome level because we lack a directed hypothesis about how genes may map onto traits. That's because while studies of development give us expectation about the mechanisms that generate traits, they often do not measure the genes that contribute to standing variation for that trait in the population. Here we use processes defined by MGI's gene ontology database to select markers nearest to genes associated with specific processes and apply the same MGP analysis for the subset of genes specified. Below we show marker effects for genes associated with intramembranous ossification as well as the accompanying phenotype.
+```{r sparse process MGP: FGF}
+library(geomorph)
+library(MASS)
+library(ddsPLS)
+library(ggplot2)
+library(Morpho)
+library(shapes)
+library(Jovid)
+library(biomaRt)
+library(plotly)
+library(org.Mm.eg.db)
+load("/data/MGP_data/offline_data.Rdata")
+mmusculusEnsembl <- loadDb(file="/data/MGP_data/ensemble.sqlite")
+
+
+#instead of process.ano doing pattern matching, we need to use it to match GO terms precisely
+selection.vector <- c('fibroblast growth factor receptor signaling pathway')
+
+process.ano <- as.character(DO.go[DO.go[,3] == selection.vector, 2])
+    
+#offline method for getting gene metadata
+      #pull gene names from process.ano (go terms)
+      coi <- c("ENSEMBL", "SYMBOL")
+      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+      
+      coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+      
+      symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+      
+      transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+      
+      #symbol, chr, start, end
+      chr_name <- rep(NA,  nrow(go2symbol))
+      gene.start <- rep(NA,  nrow(go2symbol))
+      gene.end <- rep(NA,  nrow(go2symbol))
+      
+      for(i in 1:length(unique(symbol2info$GENEID))){
+        
+        tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+        
+        chr_name[i] <- tmp.transcript$TXCHROM
+        gene.start[i] <- tmp.transcript$TXSTART
+        gene.end[i] <- tmp.transcript$TXEND
+        
+      }
+      
+      seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+      seq.info[,2] <- as.character(seq.info[,2])
+      seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+      
+    #biomart method for getting gene metadata
+    # seq.info <- getBM(attributes = c("mgi_symbol", "chromosome_name", "start_position", "end_position") , filters = "go" , values = process.ano ,mart = mouse)
+    # seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6
+    #get rid of weird chromosome names
+    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+    
+    seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    seq.indexes.downstream <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    #we have seq.info which gives us a gene name and its location on the chromosome
+    
+    for(j in 1 : dim(seq.info)[1]){
+      #seq.indexes <- rbind(seq.indexes, cbind(seq.info[j,1],MM_snps[which(MM_snps$chr == seq.info[j,2] & MM_snps$pos > mean(as.numeric(seq.info[j,3:4])) - .07 & MM_snps$pos < mean(as.numeric(seq.info[j,3:4])) + .07), c(1,3)]))
+      tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+      #for each gene, select the marker closest to the middle of the gene: DEPRECATED
+      # seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      #for each gene, select the closest upstream and downstream marker
+      tmp.downstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) > 0,]
+      seq.indexes.downstream[j,] <- as.matrix(cbind(seq.info[j,1],tmp.downstream[which.min(abs(tmp.downstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+      tmp.upstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) < 0,]
+      seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.upstream[which.min(abs(tmp.upstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+    }
+    
+    probs.rows.up <- NULL
+    probs.rows.down <- NULL
+    
+    gene.names <- seq.info[,1]
+    
+    # Y <- big.Y()[[1]][1:1140,]
+    #use list of marker names to call on probs and build probs.rows for the custom set
+    #reformat correct dims of probs.rows
+    for(i in 1: dim(seq.indexes)[1]) probs.rows.up <- cbind(probs.rows.up, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes[i,2]])
+    
+     for(i in 1: dim(seq.indexes)[1]) probs.rows.down <- cbind(probs.rows.down, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes.downstream[i,2]])
+    
+probs.rows <- Jovid::array.mean(abind::abind(probs.rows.up, probs.rows.down, along = 3))    
+    
+
+
+process.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .06)
+
+full.pred <- predict(process.svd, probs.rows)
+
+#now we should be able to take pls.svd directly and maybe label them by founder in a new column, then barplot by family, by gene
+do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
+
+pathway.loadings <- data.frame(gloadings = process.svd$mod$u[[1]], gnames = (as.character(rep(seq.info[,1], each = 8))), founders = rep(do.names, nrow(seq.info)))
+
+ultimate_theme <-   theme(
+        text = element_text(size=6), 
+        axis.text.x = element_text(angle = 75, hjust = 1),
+        axis.title.x = element_text(margin = margin(t = 20)),
+        axis.text = element_text(angle = 55, hjust = 1, size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 8, face = "bold", hjust = .5))
+
+p <- ggplot() +
+  geom_bar(data = pathway.loadings, 
+           aes(x = gnames, y = gloadings), 
+           stat = "identity", 
+           width = .75, 
+           position=position_dodge()) +
+  geom_point(data = pathway.loadings,
+             aes(x = gnames, y = gloadings, color = founders),
+             shape = "-",
+             size = 10) +
+  scale_color_manual(values=do.colors, 
+                      guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 2))) +
+  xlab("Gene") +
+  ylab("Genetic marker loading") + 
+  ultimate_theme
+
+
+# p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings)) +
+#   geom_bar(stat = "identity", width = .75, position=position_dodge()) +
+#   theme(text = element_text(size=6), 
+#         axis.text.x = element_text(angle = 75, hjust = 1),
+#         axis.title.x = element_text(margin = margin(t = 20))) +
+#   scale_fill_manual(values=do.colors) +
+#   xlab("Gene") +
+#   ylab("Genetic coefficient") +
+#   theme(axis.text = element_text(angle = 55, hjust = 1, size = 15), 
+#         axis.title = element_text(size = 15, face = "bold"))
+# 
+# 
+# 
+# p2 <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
+#   geom_bar(stat = "identity", width = .75, position=position_dodge()) +
+#   theme(text = element_text(size=6),
+#         axis.text.x = element_text(angle = 70, hjust = 1),
+#         axis.title.x = element_text(margin = margin(t = 20))) +
+#   scale_fill_manual(values=do.colors) +
+#   xlab("") +
+#   ylab("MGP loading") +
+#   theme(axis.text = element_text(angle = 55, hjust = 1, size = 12), 
+#         axis.title = element_text(size = 12, face = "bold"))
+
+# png("fgf_gloadings.png", height = 500, width = 750)
+p
+# dev.off()
+
+#rotmesh into new aligned space DO mean
+fixed.do.mean <- matrix(colMeans(Y), ncol = 3, byrow = T)
+
+par3d(zoom = .75)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .002, color = adjustcolor("red", .3))
+aspect3d("iso")
+
+proj.coords.a1 <- row2array3d(predict(process.svd, probs.rows[c(which.min(process.svd$mod$ts[[1]][,1]), which.max(process.svd$mod$ts[[1]][,1])),])$y, Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+#loading sizes for each lm
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1), type = "lines", col = "black", barblen = 0.005, lwd = 6)
+
+#mutant comparison
+    mutant <- "Fgf10CuER__R(-P+TA)__Fgf10_reton"#"ghrhr_het" #"Fgf3_hom"
+    if(mutant != " "){
+  tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == mutant,])), 54, 3))$coords
+
+    # tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == "Alk2",])), 54, 3))$coords
+    do.mean <- array.mean(tmp.mutant.registration[,,1:nrow(Y)])
+    mutant.mean <- array.mean(tmp.mutant.registration[,,-(1:nrow(Y))])
+    
+     for(i in 1:54) arrow3d(fixed.do.mean[i,] - (mutant.mean[i,] - fixed.do.mean[i,]), mutant.mean[i,], type = "lines", col = "red", barblen = 0.005, lwd = 4)    
+    
+    # cor(process.svd$mod$v[,1], manova(two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,])
+    }
+    
+rglwidget()
+
+cor(process.svd$mod$V_super[,1], manova(two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,])
+
+#allele contrasts by color
+sorted.loadings <- sort(abs(process.svd$mod$u[[1]]), decreasing = T, index.return = T)
+#here focal.allele is the n-th highest loading allele
+focal.allele <- 3
+
+#old and uglier
+# sorted.p.scores <- sort(process.svd$mod$s, index.return = T)
+# wsb.ramp <- colorRampPalette(c("black", do.colors[names(do.colors) == "WSB/EiJ"]))
+# color.vec <- wsb.ramp(20)[as.numeric(cut(probs.rows[, sorted.loadings$ix[focal.allele]],breaks = 20))]
+#plot(sorted.p.scores$x ~ probs.rows[sorted.p.scores$ix, sorted.loadings$ix[focal.allele]], col = color.vec[sorted.p.scores$ix])
+
+#get it into a dataframe and send it to ggplot
+allele.df <- data.frame(scores = process.svd$mod$s, allele_probs = probs.rows[, sorted.loadings$ix[focal.allele]])
+#figure out founder and color
+if(sorted.loadings$ix[focal.allele] %% 8 == 0){
+  allele.color <- do.colors[8] } else{
+    allele.color <- do.colors[sorted.loadings$ix[focal.allele] %% 8]
+  }
+
+allele_in_gene <- gene.names[floor(sorted.loadings$ix[focal.allele]/ 8)]
+
+ggplot(allele.df, aes(x= allele_probs, y= scores)) + 
+  geom_point(aes(colour = allele_probs)) +
+  scale_colour_gradient(low = "black", high = allele.color) +
+  geom_smooth(method = lm, se = T) +
+  labs(color = paste0(names(allele.color), " allele \n probability")) + 
+  xlab(paste0(names(allele.color)," allele probability for ", allele_in_gene, "-associated marker")) +
+  ylab("Phenotype score")
+  
+  
+  
+  
+  
+
+```
+
+What is the phenotypic correlation with the selected mutant like if we only account for the 5 greatest affected process landmarks?
+```{r localized phenotypic correlations}
+
+top5.lms <- sort(rowSums(matrix(abs(process.svd$mod$v), nrow = 162/3, byrow = T)), index.return = T, decreasing = T)
+
+cor(process.svd$mod$v[top5.lms$ix[1:5],1], manova(two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,][top5.lms$ix[1:5]])
+
+```
+
+
+
+```{r vector thickness as a function of displacement magnitude}
+
+#scalar
+par3d(zoom = .75)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .002, color = adjustcolor("red", .3))
+
+
+proj.coords.a1 <- row2array3d(predict(process.svd, probs.rows[c(which.min(process.svd$mod$s[,1]), which.max(process.svd$mod$s[,1])),]), Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+#loading sizes for each lm
+lm.loadings <- rowSums(matrix(abs(process.svd$mod$v), nrow = 162/3, byrow = T))
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1), type = "lines", col = "black", barblen = 0.005, lwd = lm.loadings[i] * 7)
+
+rglwidget()
+
+#log
+par3d(zoom = .75)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .002, color = adjustcolor("red", .3))
+
+
+proj.coords.a1 <- row2array3d(predict(process.svd, probs.rows[c(which.min(process.svd$mod$s[,1]), which.max(process.svd$mod$s[,1])),]), Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1), type = "lines", col = "black", barblen = 0.005, lwd = 4)
+
+rglwidget()
+
+```
+
+
+```{r sparse process MGP: chondrocyte differentiation}
+
+#instead of process.ano doing pattern matching, we need to use it to match GO terms precisely
+selection.vector <- c('chondrocyte differentiation')
+
+process.ano <- as.character(DO.go[DO.go[,3] == selection.vector, 2])
+    
+#offline method for getting gene metadata
+      #pull gene names from process.ano (go terms)
+      coi <- c("ENSEMBL", "SYMBOL")
+      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+      
+      coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+      
+      symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+      
+      transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+      
+      #symbol, chr, start, end
+      chr_name <- rep(NA,  nrow(go2symbol))
+      gene.start <- rep(NA,  nrow(go2symbol))
+      gene.end <- rep(NA,  nrow(go2symbol))
+      
+      for(i in 1:length(unique(symbol2info$GENEID))){
+        
+        tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+        
+        chr_name[i] <- tmp.transcript$TXCHROM
+        gene.start[i] <- tmp.transcript$TXSTART
+        gene.end[i] <- tmp.transcript$TXEND
+        
+      }
+      
+      seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+      seq.info[,2] <- as.character(seq.info[,2])
+      seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+      
+    #biomart method for getting gene metadata
+    # seq.info <- getBM(attributes = c("mgi_symbol", "chromosome_name", "start_position", "end_position") , filters = "go" , values = process.ano ,mart = mouse)
+    # seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6
+    #get rid of weird chromosome names
+    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+    
+     seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    seq.indexes.downstream <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    #we have seq.info which gives us a gene name and its location on the chromosome
+    
+    for(j in 1 : dim(seq.info)[1]){
+      #seq.indexes <- rbind(seq.indexes, cbind(seq.info[j,1],MM_snps[which(MM_snps$chr == seq.info[j,2] & MM_snps$pos > mean(as.numeric(seq.info[j,3:4])) - .07 & MM_snps$pos < mean(as.numeric(seq.info[j,3:4])) + .07), c(1,3)]))
+      tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+      #for each gene, select the marker closest to the middle of the gene: DEPRECATED
+      # seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      #for each gene, select the closest upstream and downstream marker
+      tmp.downstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) > 0,]
+      seq.indexes.downstream[j,] <- as.matrix(cbind(seq.info[j,1],tmp.downstream[which.min(abs(tmp.downstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+      tmp.upstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) < 0,]
+      seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.upstream[which.min(abs(tmp.upstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+    }
+    
+    probs.rows.up <- NULL
+    probs.rows.down <- NULL
+    
+    gene.names <- seq.info[,1]
+    
+    # Y <- big.Y()[[1]][1:1140,]
+    #use list of marker names to call on probs and build probs.rows for the custom set
+    #reformat correct dims of probs.rows
+    for(i in 1: dim(seq.indexes)[1]) probs.rows.up <- cbind(probs.rows.up, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes[i,2]])
+    
+     for(i in 1: dim(seq.indexes)[1]) probs.rows.down <- cbind(probs.rows.down, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes.downstream[i,2]])
+    
+probs.rows <- Jovid::array.mean(abind::abind(probs.rows.up, probs.rows.down, along = 3))    
+    
+#fit pls2B, need duv, gene names, seq.indexes
+perm.r2 <- rep(NA, 100)
+for(i in 1:100){
+process.svd <- mddsPLS(Xs = probs.rows, Y = Y[sample(1:nrow(Y), size = nrow(Y)),], R = 1, lambda = .06)
+
+full.pred <- predict(process.svd, probs.rows)
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+perm.r2[i] <- ess/(rss + ess)
+}
+
+process.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .06)
+
+full.pred <- predict(process.svd, probs.rows)
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+true.r2.chond <- ess/(rss + ess)
+
+(true.r2 - mean(perm.r2))/sd(perm.r2)
+
+
+#now we should be able to take pls.svd directly and maybe label them by founder in a new column, then barplot by family, by gene
+do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
+
+pathway.loadings <- data.frame(gloadings = process.svd$mod$u[[1]], gnames = (as.character(rep(seq.info[,1], each = 8))), founders = rep(do.names, nrow(seq.info)))
+
+ultimate_theme <-   theme(
+        text = element_text(size=6), 
+        axis.text.x = element_text(angle = 75, hjust = 1),
+        axis.title.x = element_text(margin = margin(t = 20)),
+        axis.text = element_text(angle = 55, hjust = 1, size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 8, face = "bold", hjust = .5))
+
+p <- ggplot() +
+  geom_bar(data = pathway.loadings, 
+           aes(x = gnames, y = gloadings), 
+           stat = "identity", 
+           width = .75, 
+           position=position_dodge()) +
+  geom_point(data = pathway.loadings,
+             aes(x = gnames, y = gloadings, color = founders),
+             shape = "-",
+             size = 10) +
+  scale_color_manual(values=do.colors, 
+                      guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 2))) +
+  xlab("Gene") +
+  ylab("Genetic marker loading") + 
+  ultimate_theme
+
+
+# p <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings)) +
+#   geom_bar(stat = "identity", width = .75, position=position_dodge()) +
+#   theme(text = element_text(size=6), 
+#         axis.text.x = element_text(angle = 75, hjust = 1),
+#         axis.title.x = element_text(margin = margin(t = 20))) +
+#   scale_fill_manual(values=do.colors) +
+#   xlab("Gene") +
+#   ylab("Genetic coefficient") +
+#   theme(axis.text = element_text(angle = 55, hjust = 1, size = 15), 
+#         axis.title = element_text(size = 15, face = "bold"))
+# 
+# 
+# 
+# p2 <- ggplot(data = pathway.loadings, aes(x = gnames, y = gloadings, fill = founders)) +
+#   geom_bar(stat = "identity", width = .75, position=position_dodge()) +
+#   theme(text = element_text(size=6),
+#         axis.text.x = element_text(angle = 70, hjust = 1),
+#         axis.title.x = element_text(margin = margin(t = 20))) +
+#   scale_fill_manual(values=do.colors) +
+#   xlab("") +
+#   ylab("MGP loading") +
+#   theme(axis.text = element_text(angle = 55, hjust = 1, size = 12), 
+#         axis.title = element_text(size = 12, face = "bold"))
+
+# png("chond_gloadings.png", height = 500, width = 750)
+p
+# dev.off()
+
+#rotmesh into new aligned space DO mean
+fixed.do.mean <- matrix(colMeans(Y), ncol = 3, byrow = T)
+
+par3d(zoom = .75)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .002, color = adjustcolor("red", .3))
+text3d(fixed.do.mean, texts = 1:54)
+
+
+proj.coords.a1 <- row2array3d(predict(process.svd, probs.rows[c(which.min(process.svd$mod$s[,1]), which.max(process.svd$mod$s[,1])),]), Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+#loading sizes for each lm
+lm.loadings <- rowSums(matrix(abs(process.svd$mod$v), nrow = 162/3, byrow = T))
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1), type = "lines", col = "black", barblen = 0.005, lwd = lm.loadings[i] * 7)
+
+#mutant comparison
+    mutant <- "Alk6"#"Bmp2"#"Alk6"
+    if(mutant != " "){
+  tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == mutant,])), 54, 3))$coords
+
+    # tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == "Alk2",])), 54, 3))$coords
+    do.mean <- array.mean(tmp.mutant.registration[,,1:nrow(Y)])
+    mutant.mean <- array.mean(tmp.mutant.registration[,,-(1:nrow(Y))])
+    
+     for(i in 1:54) arrow3d(fixed.do.mean[i,] - (mutant.mean[i,] - fixed.do.mean[i,]), mutant.mean[i,], type = "lines", col = "red", barblen = 0.005, lwd = 4)    
+    
+    # cor(process.svd$mod$v[,1], manova(two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,])
+    }
+    
+rglwidget()
+
+#full vector correlation
+cor(process.svd$mod$v[,1], manova(two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,])
+
+#partial vector correlation on the 5 most affected landmarks for the process MGP
+top5.lms <- sort(rowSums(matrix(abs(process.svd$mod$v), nrow = 162/3, byrow = T)), index.return = T, decreasing = T)
+
+cor(process.svd$mod$v[top5.lms$ix[1:5],1], manova(two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,][top5.lms$ix[1:5]])
+
+```
+
+```{r normalized score comparisons}
+
+#instead of process.ano doing pattern matching, we need to use it to match GO terms precisely
+selection.vector <- c('neural crest cell migration')
+
+process.ano <- as.character(DO.go[DO.go[,3] == selection.vector, 2])
+    
+#offline method for getting gene metadata
+      #pull gene names from process.ano (go terms)
+      coi <- c("ENSEMBL", "SYMBOL")
+      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+      
+      coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+      
+      symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+      
+      transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+      
+      #symbol, chr, start, end
+      chr_name <- rep(NA,  nrow(go2symbol))
+      gene.start <- rep(NA,  nrow(go2symbol))
+      gene.end <- rep(NA,  nrow(go2symbol))
+      
+      for(i in 1:length(unique(symbol2info$GENEID))){
+        
+        tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+        
+        chr_name[i] <- tmp.transcript$TXCHROM
+        gene.start[i] <- tmp.transcript$TXSTART
+        gene.end[i] <- tmp.transcript$TXEND
+        
+      }
+      
+      seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+      seq.info[,2] <- as.character(seq.info[,2])
+      seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+      
+    #biomart method for getting gene metadata
+    # seq.info <- getBM(attributes = c("mgi_symbol", "chromosome_name", "start_position", "end_position") , filters = "go" , values = process.ano ,mart = mouse)
+    # seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6
+    #get rid of weird chromosome names
+    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+    
+     seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    seq.indexes.downstream <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    #we have seq.info which gives us a gene name and its location on the chromosome
+    
+    for(j in 1 : dim(seq.info)[1]){
+      #seq.indexes <- rbind(seq.indexes, cbind(seq.info[j,1],MM_snps[which(MM_snps$chr == seq.info[j,2] & MM_snps$pos > mean(as.numeric(seq.info[j,3:4])) - .07 & MM_snps$pos < mean(as.numeric(seq.info[j,3:4])) + .07), c(1,3)]))
+      tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+      #for each gene, select the marker closest to the middle of the gene: DEPRECATED
+      # seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      #for each gene, select the closest upstream and downstream marker
+      tmp.downstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) > 0,]
+      seq.indexes.downstream[j,] <- as.matrix(cbind(seq.info[j,1],tmp.downstream[which.min(abs(tmp.downstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+      tmp.upstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) < 0,]
+      seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.upstream[which.min(abs(tmp.upstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+    }
+    
+    probs.rows.up <- NULL
+    probs.rows.down <- NULL
+    
+    gene.names <- seq.info[,1]
+    
+    # Y <- big.Y()[[1]][1:1140,]
+    #use list of marker names to call on probs and build probs.rows for the custom set
+    #reformat correct dims of probs.rows
+    for(i in 1: dim(seq.indexes)[1]) probs.rows.up <- cbind(probs.rows.up, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes[i,2]])
+    
+     for(i in 1: dim(seq.indexes)[1]) probs.rows.down <- cbind(probs.rows.down, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes.downstream[i,2]])
+    
+probs.rows <- Jovid::array.mean(abind::abind(probs.rows.up, probs.rows.down, along = 3))    
+    
+#fit pls2B, need duv, gene names, seq.indexes
+perm.r2 <- rep(NA, 100)
+for(i in 1:100){
+process.svd <- mddsPLS(Xs = probs.rows, Y = Y[sample(1:nrow(Y), size = nrow(Y)),], R = 1, lambda = .06)
+
+full.pred <- predict(process.svd, probs.rows)
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+perm.r2[i] <- ess/(rss + ess)
+if(i%%20 == 0)print(i/100)
+}
+
+process.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .06)
+
+full.pred <- predict(process.svd, probs.rows)
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+true.r2 <- ess/(rss + ess)
+
+(true.r2 - mean(perm.r2))/sd(perm.r2)
+
+```
+
+```{r plot best prediction and worst prediction}
+
+best <- which.min(colSums(apply(full.pred, 1, function(x) (x - colMeans(Y))^2)))
+worst <- which.max(colSums(apply(full.pred, 1, function(x) (x - colMeans(Y))^2)))
+
+#rotmesh into new aligned space DO mean
+fixed.do.mean <- matrix(colMeans(Y), ncol = 3, byrow = T)
+
+par3d(zoom = .75)
+bg3d("white")
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+
+proj.coords.a1 <- row2array3d(predict(process.svd, probs.rows[c(best, worst),]), Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+Y3d <- row2array3d(Y, Nlandmarks = 54)
+
+# for(i in 1:54) arrow3d(Y3d[i,,best], proj.coords.a1[i,], type = "lines", col = "black", barblen = 0.01, lwd = 4)
+# for(i in 1:54) arrow3d(Y3d[i,,worst], proj.coords.a2[i,], type = "lines", col = "red", barblen = 0.01, lwd = 4)
+
+for(i in 1:54) arrow3d(Y3d[i,,which.min(giga.pca$x[,1])], Y3d[i,,which.max(giga.pca$x[,1])], type = "lines", col = "red", barblen = 0.01, lwd = 4)
+
+proj.coords.a1 <- matrix(min(giga.pca$x[,1]) * giga.pca$rotation[,1], ncol = 3, byrow = T) + fixed.do.mean
+proj.coords.a2 <- matrix(max(giga.pca$x[,1]) * giga.pca$rotation[,1], ncol = 3, byrow = T) + fixed.do.mean
+
+for(i in 1:54) arrow3d(proj.coords.a1, proj.coords.a2, type = "lines", col = "black", barblen = 0.01, lwd = 4)
+
+rglwidget()
+
+
+
+
+```
+
+
+```{r plot selected effects}
+
+#now we should be able to take pls.svd directly and maybe label them by founder in a new column, then barplot by family, by gene
+do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
+
+pathway.loadings <- data.frame(gloadings = process.svd$mod$u[[1]], gnames = (as.character(rep(seq.info[,1], each = 8))), founders = rep(do.names, nrow(seq.info)))
+
+ultimate_theme <-   theme(
+        text = element_text(size=6), 
+        axis.text.x = element_text(angle = 75, hjust = 1),
+        axis.title.x = element_text(margin = margin(t = 20)),
+        axis.text = element_text(angle = 55, hjust = 1, size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 8, face = "bold", hjust = .5))
+
+ggplot() +
+  geom_bar(data = pathway.loadings, 
+           aes(x = gnames, y = gloadings), 
+           stat = "identity", 
+           width = .75, 
+           position=position_dodge()) +
+  geom_point(data = pathway.loadings,
+             aes(x = gnames, y = gloadings, color = founders),
+             shape = "-",
+             size = 10) +
+  scale_color_manual(values=do.colors, 
+                      guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 2))) +
+  xlab("Gene") +
+  ylab("Genetic marker loading") + 
+  ultimate_theme
+
+#rotmesh into new aligned space DO mean
+fixed.do.mean <- matrix(colMeans(Y), ncol = 3, byrow = T)
+
+par3d(zoom = .75)
+bg3d("white")
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .002, color = adjustcolor("red", .3))
+# text3d(fixed.do.mean, texts = 1:54)
+
+
+proj.coords.a1 <- row2array3d(predict(process.svd, probs.rows[c(which.min(process.svd$mod$s[,1]), which.max(process.svd$mod$s[,1])),]), Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (10 - 1), type = "lines", col = "black", barblen = 0.005, lwd = 6)
+
+#mutant comparison
+    mutant <- "Alk6"#"Bmp2"#"Alk6"
+    if(mutant != " "){
+  tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == mutant,])), 54, 3))$coords
+
+    # tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == "Alk2",])), 54, 3))$coords
+    do.mean <- array.mean(tmp.mutant.registration[,,1:nrow(Y)])
+    mutant.mean <- array.mean(tmp.mutant.registration[,,-(1:nrow(Y))])
+    
+     # for(i in 1:54) arrow3d(fixed.do.mean[i,] - (mutant.mean[i,] - fixed.do.mean[i,]), mutant.mean[i,], type = "lines", col = "red", barblen = 0.005, lwd = 4)    
+    
+    # cor(process.svd$mod$v[,1], manova(two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,])
+    }
+    
+rglwidget()
+
+```
+
+
+
+```{r simulating allelic effects in a 2-state model}
+
+#use the existing phenotypic data to create a contrast for the allele. Let's start with random allele effects
+set.seed(42)
+num.loci <- 1000
+random.alleles <- matrix(NA, nrow = nrow(Y), ncol = num.loci)
+for(i in 1:num.loci) random.alleles[,i] <- rbinom(nrow(Y), size = 1, prob = .5)
+
+#now simulate a strong allele effect
+sim.allele <- sort(prcomp(Y)$x[,1], index.return = T)$ix
+sim.allele2 <- sort(prcomp(Y)$x[,2], index.return = T)$ix
+#negs get 1, pos get 0, some randomness in between
+random.alleles[sim.allele[1:400],1] <- 1
+random.alleles[sim.allele[774:1145],1] <- 0
+
+random.alleles[sim.allele2[1:400],2] <- 1
+random.alleles[sim.allele2[774:1145],2] <- 0
+
+random2state <- mddsPLS(random.alleles, Y, lambda = .06)
+
+plot(random2state$mod$u[[1]])
+
+#phenotype
+par3d(zoom = .75)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .002, color = adjustcolor("red", .3))
+
+proj.coords.a1 <- row2array3d(predict(random2state, random.alleles[c(which.min(random2state$mod$s[,1]), which.max(random2state$mod$s[,1])),]), Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1), type = "lines", col = "black", barblen = 0.005, lwd = 5)
+
+rglwidget()
+
+#var explained by random model
+full.pred <- predict(random2state, random.alleles)
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+ess/(rss + ess)
+
+
+
+```
+
+```{r 8-state simulation}
+
+#use the existing phenotypic data to create a contrast for the allele. Let's start with random allele effects
+set.seed(45)
+num.loci <- 40
+random.alleles <- NULL
+
+for(i in 1:num.loci) random.alleles <- cbind(random.alleles, t(rmultinom(nrow(Y), size = 8, prob = rep(.125,8))/8))
+
+#now simulate a strong allele effect
+sim.allele <- sort(prcomp(Y)$x[,1], index.return = T)$ix
+sim.allele2 <- sort(prcomp(Y)$x[,2], index.return = T)$ix
+#negs get 1, pos get 0, some randomness in between
+# a random n=250 sample of the top 400 have same allele
+#granted, these are pretty hacky multinomials distributions. It would be ideal to draw from the true genotype probability distribution, which is mostly trinomial at 0,.5,1
+pc.sample <- sample(1:700, 100)
+random.alleles[sim.allele[pc.sample],8] <- 1
+#it's homozygous, so we have to zero out the other 8 probs
+random.alleles[sim.allele[pc.sample],1:7] <- 0
+
+# a random n=250 sample of the top 400 have same allele
+random.alleles[sim.allele2[pc.sample],24] <- 1
+#it's fixed, so we have to zero out the other 8 probs
+random.alleles[sim.allele2[pc.sample],17:23] <- 0
+
+random8state <- mddsPLS(random.alleles, Y, lambda = .06)
+
+full.pred <- predict(random8state, random.alleles)
+
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+
+ess/(rss + ess)
+
+#now we should be able to take pls.svd directly and maybe label them by founder in a new column, then barplot by family, by gene
+do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
+
+pathway.loadings <- data.frame(gloadings = random8state$mod$u[[1]], gnames = (as.character(rep(1:num.loci, each = 8))), founders = rep(do.names, num.loci))
+
+ultimate_theme <-   theme(
+        text = element_text(size=6), 
+        axis.text.x = element_text(angle = 75, hjust = 1),
+        axis.title.x = element_text(margin = margin(t = 20)),
+        axis.text = element_text(angle = 55, hjust = 1, size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 8, face = "bold", hjust = .5))
+
+p <- ggplot() +
+  geom_bar(data = pathway.loadings, 
+           aes(x = gnames, y = gloadings), 
+           stat = "identity", 
+           width = .75, 
+           position=position_dodge()) +
+  geom_point(data = pathway.loadings,
+             aes(x = gnames, y = gloadings, color = founders),
+             shape = "-",
+             size = 10) +
+  scale_color_manual(values=do.colors, 
+                      guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 2))) +
+  xlab("Gene") +
+  ylab("Genetic marker loading") + 
+  ultimate_theme
+
+# png("fgf_gloadings.png", height = 500, width = 750)
+p
+# dev.off()
+
+#rotmesh into new aligned space DO mean
+fixed.do.mean <- matrix(colMeans(Y), ncol = 3, byrow = T)
+
+par3d(zoom = .75)
+
+shape.warp <-  plot3d(shape.mean$mesh, col = adjustcolor("lightgrey", .3), alpha = .2, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+spheres3d(fixed.do.mean, radius = .002, color = adjustcolor("red", .3))
+
+
+proj.coords.a1 <- row2array3d(predict(random8state, random.alleles[c(which.min(random8state$mod$s[,1]), which.max(random8state$mod$s[,1])),]), Nlandmarks = 54)
+proj.coords.a2 <- proj.coords.a1[,,2]
+proj.coords.a1 <- proj.coords.a1[,,1]
+
+for(i in 1:54) arrow3d(proj.coords.a2[i,], proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1), type = "lines", col = "black", barblen = 0.005, lwd = 6)
+
+rglwidget()
+
+
+#allele contrasts by color
+sorted.loadings <- sort(abs(random8state$mod$u[[1]]), decreasing = T, index.return = T)
+#here focal.allele is the n-th highest loading allele
+focal.allele <- 1
+
+
+#get it into a dataframe and send it to ggplot
+allele.df <- data.frame(scores = random8state$mod$s, allele_probs = random.alleles[, sorted.loadings$ix[focal.allele]])
+#figure out founder and color
+if(sorted.loadings$ix[focal.allele] %% 8 == 0){
+  allele.color <- do.colors[8] } else{
+    allele.color <- do.colors[sorted.loadings$ix[focal.allele] %% 8]
+  }
+
+if(floor(sorted.loadings$ix[focal.allele]/ 8) == 0){
+  allele_in_gene <- 1
+  } else{
+allele_in_gene <- 1:num.loci[floor(sorted.loadings$ix[focal.allele]/ 8)]}
+
+ggplot(allele.df, aes(x= allele_probs, y= scores)) + 
+  geom_point(aes(colour = allele_probs)) +
+  scale_colour_gradient(low = "black", high = allele.color) +
+  geom_smooth(method = lm, se = T) +
+  labs(color = paste0(names(allele.color), " allele \n probability")) + 
+  xlab(paste0(names(allele.color)," allele probability for ", allele_in_gene, "-associated marker")) +
+  ylab("Phenotype score")
+
+```
+
+
+```{r random marker selection for permutation}
+
+MGP_permuter <- function(gss = NULL, n_perms = 1000){
+
+perm_r2 <- rep(NA, n_perms)
+
+for(j in 1:n_perms){
+  
+random_gene_sampler <- sample(1:dim(DO.probs)[3], size = gss, replace = F)
+
+probs.rows <- NULL
+  
+for(i in 1: length(gss)) probs.rows <- cbind(probs.rows, DO.probs[,,random_gene_sampler[i]])
+
+process.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .06)
+
+full.pred <- predict(process.svd, probs.rows)$y
+
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+
+perm_r2[j] <- ess/(rss + ess)
+
+if(j %% 20 == F) print(paste0(round((j/n_perms)*100, digits = 1), "% done"))
+
+}
+return(perm_r2)
+}
+
+set.seed(38)
+chond_perm <- MGP_permuter(38)
+
+set.seed(41)
+fgf_perm <- MGP_permuter(41)
+
+hist(chond_perm)
+hist(fgf_perm)
+
+chond.df <- data.frame(r2 = chond_perm)
+
+ggplot(chond.df, mapping = aes(x = r2, fill = "#adcae6")) + 
+  geom_histogram(alpha = 1, show.legend = FALSE) + 
+  geom_vline(xintercept = true.r2.chond) +
+  xlab(expression(paste("38 marker MGP R"^"2"))) +
+  ylab("Frequency") +
+  scale_fill_manual(values = "#adcae6") +
+  theme_bw()
+
+fgf.df <- data.frame(r2 = fgf_perm)
+
+ggplot(fgf.df, mapping = aes(x = r2, fill = "#adcae6")) + 
+  geom_histogram(alpha = 1, show.legend = FALSE) + 
+  geom_vline(xintercept = true.r2.fgf) +
+  xlab(expression(paste("41 marker MGP R"^"2"))) +
+  ylab("Frequency") +
+  scale_fill_manual(values = "#adcae6") +
+  theme_bw()
+
+
+```
+
+
+
+
+
+
+
+
+We also offer a tool that allows a user to interact with this analysis by choosing processes of their interest. The analysis is then done in real time and the results are returned to the user. We can also compare the similarity in the direction of the process effect with the direction of PC1, the whole genome MGP direction, or one of many mutants genotypes from previous studies in the lab.
+
+
+#Similarity of process effects to general variation in the DO
+
+How many processes align with the principal axis of variation?
+```{r number of genes}
+
+ngenes <- rep(NA, nrow(DO.go))
+
+for(i in 1:length(unique(DO.go[,2]))){
+tryCatch({
+process.ano <- as.character(DO.go[i,2])
+
+#offline method for getting gene metadata
+      #pull gene names from process.ano (go terms)
+      coi <- c("ENSEMBL", "SYMBOL")
+      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+
+      ngenes[i] <- nrow(go2symbol)
+      }, error=function(e){cat("ERROR")})
+}
+
+table(ngenes)
+
+write.csv(ngenes, "ngenes.csv", row.names = F)
+
+DO.go <- data.frame(DO.go, ngenes)
+    
+```
+
+
+```{r random processes eigen similarity, message=FALSE, warning=FALSE}
+
+#several of them have far too many genes for grep to work. I'll probably split the list between those processes that have >200
+#genes and those that don't so I can figure out how to deal with such big gene lists
+process.loadings <- matrix(NA, nrow = 162, ncol = 1000)
+allele.freqs <- NULL
+process.name <- rep(NA, ncol(process.loadings))
+process.r2 <- rep(NA, ncol(process.loadings))
+ngenes.random <- rep(NA, ncol(process.loadings))
+pathway.score <- rep(NA, ncol(process.loadings))
+#process.value <- rep(NA, ncol(process.loadings))
+permuted.r2 <- matrix(NA, nrow = 100, ncol = 1000)
+geno.loadings <- NULL
+
+set.seed(587)
+process.sampler <- sample(1:length(unique(DO.go[,3])), size = 1000, replace = F)
+
+for(k in c(1:1000)[is.na(process.name)]){
+  tryCatch({
+  process.ano <- as.character(unique(DO.go[,2])[process.sampler[k]])
+    # process.ano <- as.character(unique(DO.go[,2])[sample(1:length(unique(DO.go[,3])), size = 1)])
+#offline method for getting gene metadata
+      #pull gene names from process.ano (go terms)
+      coi <- c("ENSEMBL", "SYMBOL")
+      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+      
+      ngenes.random[k] <- nrow(go2symbol)
+      
+      coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+      
+      symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+      
+      transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+      
+      #symbol, chr, start, end
+      chr_name <- rep(NA,  nrow(go2symbol))
+      gene.start <- rep(NA,  nrow(go2symbol))
+      gene.end <- rep(NA,  nrow(go2symbol))
+      
+      for(i in 1:length(unique(symbol2info$GENEID))){
+        
+        tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+        
+        chr_name[i] <- tmp.transcript$TXCHROM
+        gene.start[i] <- tmp.transcript$TXSTART
+        gene.end[i] <- tmp.transcript$TXEND
+        
+      }
+      
+      seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+      seq.info[,2] <- as.character(seq.info[,2])
+      seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+      
+    #get rid of weird chromosome names
+    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+    if(length(grep(seq.info$chromosome_name, pattern = "GL")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "GL"),]
+      
+      seq.info <- na.omit(seq.info) 
+      
+    seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    seq.indexes.downstream <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    #we have seq.info which gives us a gene name and its location on the chromosome
+    
+    for(j in 1 : dim(seq.info)[1]){
+      #seq.indexes <- rbind(seq.indexes, cbind(seq.info[j,1],MM_snps[which(MM_snps$chr == seq.info[j,2] & MM_snps$pos > mean(as.numeric(seq.info[j,3:4])) - .07 & MM_snps$pos < mean(as.numeric(seq.info[j,3:4])) + .07), c(1,3)]))
+      tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+      #for each gene, select the marker closest to the middle of the gene: DEPRECATED
+      # seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      #for each gene, select the closest upstream and downstream marker
+      tmp.downstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) > 0,]
+      seq.indexes.downstream[j,] <- as.matrix(cbind(seq.info[j,1],tmp.downstream[which.min(abs(tmp.downstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+      tmp.upstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) < 0,]
+      seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.upstream[which.min(abs(tmp.upstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+    }
+    
+    probs.rows.up <- NULL
+    probs.rows.down <- NULL
+    
+    gene.names <- seq.info[,1]
+    
+    #reformat correct dims of probs.rows
+    for(i in 1: dim(seq.indexes)[1]) probs.rows.up <- cbind(probs.rows.up, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes[i,2]])
+    
+     for(i in 1: dim(seq.indexes)[1]) probs.rows.down <- cbind(probs.rows.down, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes.downstream[i,2]])
+    
+probs.rows <- Jovid::array.mean(abind::abind(probs.rows.up, probs.rows.down, along = 3))  
+  
+allele.freqs[[k]] <- colSums(probs.rows>.25)/nrow(Y)
+
+#permutation to get a family-wise error rate
+# perm.r2 <- rep(NA, 100)
+# for(i in 1:100){
+# process.svd <- mddsPLS(Xs = probs.rows, Y = Y[sample(1:nrow(Y), size = nrow(Y)),], R = 1, lambda = .06)
+# 
+# full.pred <- predict(process.svd, probs.rows)
+# ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+# rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+# perm.r2[i] <- ess/(rss + ess)
+# }
+# 
+# permuted.r2[,k] <- perm.r2
+
+pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .06)
+full.pred <- predict(pls.svd, probs.rows)
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+process.r2[k] <- ess/(rss + ess)
+
+# pathway.score[k] <- (process.r2[k] - mean(perm.r2))/sd(perm.r2)
+
+# for(i in 1:1000) pathway.score[i] <- (process.r2[i] - mean(permuted.r2[,i]))/sd(permuted.r2[,i])
+
+
+geno.loadings[[k]] <- pls.svd$mod$u[[1]][,1]
+#process.value[k] <- pls.svd$d[1]
+process.loadings[,k] <- pls.svd$mod$v[,1]
+process.name[k] <- as.character(unique(DO.go[,3])[unique(DO.go[,2]) == process.ano])
+
+
+if(k %% 20 == 0) print(paste0(round((k/ncol(process.loadings))*100, digits = 2), "% done"))
+      }, error=function(e){cat("Bad annotation, retrying. ")})
+}#end k
+
+save(geno.loadings, process.loadings, process.name, allele.freqs, process.r2, file = "random_process_eigensimilarity.Rdata")
+
+```
+
+#Annotated processes are generally uncorrelated with PC1
+
+We chose 2000 GO annotations at random and used sparse PLS on the markers closest to the genes associated with each process. We then compared the direction of phenotypic response associated with each process to the direction of principal component 1 of the shape data. A higher correlation denotes a process associated with similar phenotypic variation similar to PC1. Chosen at random, we can get a sense for the extent to which developmental processes contribute generally to the shape of the face and cranium. The figure below shows that the majority of developmental processes affect the shape of the face in directions away from PC1. 
+```{r process correlation with PC1/2 and CAC}
+
+giga.pca <- prcomp(Y)
+DO.cac <- CAC(DO.pheno, DO.size)
+
+process.correlations <- matrix(NA, ncol = 4, nrow = ncol(process.loadings))
+process.correlations2 <- rep(NA, ncol(process.loadings))
+cac.cor <- rep(NA, ncol(process.loadings))
+process.angles <- rep(NA, ncol(process.loadings))
+for(i in 1:ncol(process.loadings)){
+  # process.angles[i] <- angle(giga.pca$rotation[,1], process.loadings[,i])
+  process.correlations[i,1] <- cor(giga.pca$rotation[,1], process.loadings[,i])
+  process.correlations[i,2] <- cor(giga.pca$rotation[,2], process.loadings[,i])
+  process.correlations[i,3] <- cor(giga.pca$rotation[,3], process.loadings[,i])
+  process.correlations[i,4] <- cor(giga.pca$rotation[,4], process.loadings[,i])
+  print(i)
+  # cac.cor[i] <- cor(DO.cac$CAC, process.loadings[,i])
+}
+
+# plot(y = process.correlations, x = ((180/pi) * process.angles))
+# plot(y = abs(process.correlations), x = (gene.number))
+
+View(cbind(process.name, abs(process.correlations)))
+#very generic processes have largest eigenvalues...is that because of the number of genes?
+# gene.number <- rep(NA, ncol(process.loadings))
+# for(i in 1:length(gene.number)){
+# process.GO <-  as.character(unique(DO.go[,2])[DO.go[,3] == process.name[i]])
+# gene.ano <- unique(DO.go2[DO.go2[,5] == process.GO, 2])
+# 
+# gene.number[i] <- length(as.character(MGI.db[grep(MGI.db[,9], pattern = paste(gene.ano, collapse = "|")),10]))
+# }
+# 
+# View(cbind(process.name, abs(process.correlations), process.value, gene.number))
+# 
+# # plot3d(abs(process.correlations), process.value, gene.number)
+# rglwidget()
+
+
+process.cor.df <- data.frame(process.name = as.character(process.name), cor = abs(process.correlations))
+
+process.cor.df[,1] <- as.character(process.cor.df[,1])
+
+ggplot(process.cor.df) + 
+  geom_polygon(aes(x = density(na.omit(cor.1))$x, y = density(na.omit(cor.1))$y), alpha = .1, show.legend = FALSE) + 
+  # geom_polygon(aes(x = density(na.omit(cor.2))$x, y = density(na.omit(cor.2))$y), alpha = .1, show.legend = FALSE) + 
+  xlab("Correlation to PC axis") +
+  ylab("Density") +
+  theme_bw()
+
+ggplotly(proc.cor.plot, tooltip = "text")
+
+
+plot(density(na.omit(process.cor.df$cor.1)), xlab = "Correlation to PC axis", ylab = "Density", main = "", ylim = c(0,11), xlim = c(0,1))
+polygon(density(na.omit(process.cor.df$cor.2)))
+polygon(density(na.omit(process.cor.df$cor.3)))
+polygon(density(na.omit(process.cor.df$cor.4)))
+
+
+
+```
+
+```{r mutant morphospace diagnostics}
+
+ tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[])), 54, 3))$coords
+  tmp.mutant.mean <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms[])), 54, 3))$consensus
+  
+
+  mutant.2d <- two.d.array(tmp.mutant.registration[,,-(1:nrow(Y))])
+
+  tmp.Y <- two.d.array(tmp.mutant.registration[,,(1:nrow(Y))])
+  
+  tmp.pca <- prcomp(two.d.array(tmp.mutant.registration))
+  
+
+  mutant.scores <- mutant.2d %*% tmp.pca$rotation
+  
+  process.scores <- full.pred %*% tmp.pca$rotation
+  
+  # plot(tmp.pca$x, xlim = c(-.1, .1), ylim = c(-.05, .05))
+  plot(tmp.pca$x, typ = "n", xlim = c(-.05, .1), ylim = c(-.03, .03))
+  #mutant mean labels
+  
+  # for(i in (1:length(unique(mutant.db$Genotype)))[-c(24,grep(unique(mutant.db$Genotype), pattern = "wt"))]){
+  for(i in c(1:5,7:10,13:14,22:23,28:29,34,36:37,41:44,46:48,50:52,63:65)){
+    mutant <- unique(mutant.db$Genotype)[i]
+  mmean.score <- colMeans(mutant.scores[mutant.db$Genotype == mutant,])
+  text(mmean.score[1], mmean.score[2], labels = mutant, col = 2, cex = .7)
+  }
+  
+
+  
+ #diagnostics cause wei's landmarks were backwards in shape.mean2
+  # bg3d("white")
+  # plot3d(shape.mean2, col = "lightgrey", alpha = .3)
+  # text3d(shape.mean.lms, texts = 1:54)
+  # rglwidget()
+  
+#do we have mutants with swapped landmarks in the dataset
+  mutant.3d <- arrayspecs(mutant.2d, 54,3)
+  # mutant.3d <- arrayspecs(tmp.Y, 54,3)
+  bg3d("white")
+  plot3d(mutant.3d[c(47,17:18),,1], col = c(4,1,2))
+  for(i in 1:dim(mutant.3d)[3]) points3d(mutant.3d[c(47,17:18),,i], col = c(4,1,2))
+rglwidget()
+
+
+#let's check for the issue on a genotype by genotype basis
+
+aspect3d("iso")
+plot3d(shape.mean$mesh, col = "lightgrey", alpha = .25,specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+# plot3d(tmp.mutant.mean, typ = "n")
+
+text3d(tmp.mutant.mean, texts= 1:54, cex = 2)
+# for(j in 1:sum(mutant.db$Genotype == unique(mutant.db$Genotype)[i])) {
+  
+  text3d(mutant.3d[,,mutant.db$Genotype == unique(mutant.db$Genotype)[i]][,,j], texts= 1:54, col = 2)
+  arrow3d(mutant.3d[,,mutant.db$Genotype == unique(mutant.db$Genotype)[i]][17,,j], mutant.3d[,,mutant.db$Genotype == unique(mutant.db$Genotype)[i]][18,,j])
+# }
+
+rglwidget()
+
+
+#suspicious genos lm3,17-18: 8, 10, 32, 33, 74
+#lm 10-11 region: 13, 28, 32, 33 lm31 is messed up, 54,55,56, 57, 60, 61,62, 75
+
+#weird in unique ways: 77
+
+table(mutant.db$Genotype)[c(8,10,32,33,74,13,28,32,33,54,55,56,57,60,61,62,75,77)]
+
+#mutants to eliminate
+no.mutant <- unique(mutant.db$Genotype)[c(6,11:12,15:21,24,25:27,30,33,35:36,38:40,45,49,53:62,64:72,74:78)]
+
+
+mutant.db2 <- mutant.db[mutant.db$Genotype %in% no.mutant == F,]
+mutant.lms2 <- mutant.lms[mutant.db$Genotype %in% no.mutant == F,]
+
+mutant.db2 <- mutant.db[mutant.db$Genotype %in% no.mutant == F,]
+mutant.lms2 <- mutant.lms[mutant.db$Genotype %in% no.mutant == F,]
+
+mutant.lmsfin <- mutant.lms2[mutant.db2$Control == "No",]
+mutant.dbfin <- mutant.db2[mutant.db2$Control == "No",]
+
+#move forward with reduced mutant dataset
+tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms2)), 54, 3))$coords
+  tmp.mutant.mean <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lms2)), 54, 3))$consensus
+  
+
+  mutant.2d <- two.d.array(tmp.mutant.registration[,,-(1:nrow(Y))])
+
+  tmp.Y <- two.d.array(tmp.mutant.registration[,,(1:nrow(Y))])
+  
+  tmp.pca <- prcomp(two.d.array(tmp.mutant.registration))
+  
+
+  mutant.scores <- mutant.2d %*% tmp.pca$rotation
+  
+  process.scores <- full.pred %*% tmp.pca$rotation
+  
+  # plot(tmp.pca$x, xlim = c(-.1, .1), ylim = c(-.05, .05))
+  plot(tmp.pca$x, typ = "n", xlim = c(-.05, .1), ylim = c(-.03, .03))
+  #mutant mean labels
+  
+  for(i in (1:length(unique(mutant.db2$Genotype)))){
+  # for(i in c(1:5,7:10,13:14,22:23,28:29,34,36:37,41:44,46:48,50:52,63:65)){
+    mutant <- unique(mutant.db2$Genotype)[i]
+  mmean.score <- colMeans(mutant.scores[mutant.db2$Genotype == mutant,])
+  text(mmean.score[1], mmean.score[2], labels = mutant, col = 2, cex = .7)
+  }
+  
+points(tmp.Y %*% tmp.pca$rotation, col = adjustcolor("slategrey", alpha.f = .1))
+  
+#   
+# for(k in c(1:10)){
+#   tryCatch({
+#     process.name <- c("mesodermal cell fate specification", "execution phase of apoptosis", "endochondral ossification", "bmp signaling pathway", "cranial suture morphogenesis", "wnt signaling pathway", "intraciliary transport", "neurotransmitter transport")[k]
+#   # process.ano <- as.character(unique(DO.go[,2])[sample(1:length(unique(DO.go[,3])), size = 1)])
+#   process.ano <- as.character(DO.go[DO.go[,3] == process.name,2])
+#     # process.name <- as.character(unique(DO.go[,3])[unique(DO.go[,2]) == process.ano])
+# #offline method for getting gene metadata
+#       #pull gene names from process.ano (go terms)
+#       coi <- c("ENSEMBL", "SYMBOL")
+#       go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+#       
+#       coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+#       
+#       symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+#       
+#       transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+#       
+#       #symbol, chr, start, end
+#       chr_name <- rep(NA,  nrow(go2symbol))
+#       gene.start <- rep(NA,  nrow(go2symbol))
+#       gene.end <- rep(NA,  nrow(go2symbol))
+#       
+#       for(i in 1:length(unique(symbol2info$GENEID))){
+#         
+#         tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+#         
+#         chr_name[i] <- tmp.transcript$TXCHROM
+#         gene.start[i] <- tmp.transcript$TXSTART
+#         gene.end[i] <- tmp.transcript$TXEND
+#         
+#       }
+#       
+#       seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+#       seq.info[,2] <- as.character(seq.info[,2])
+#       seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+#       
+#     #get rid of weird chromosome names
+#     if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+#     if(length(grep(seq.info$chromosome_name, pattern = "GL")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "GL"),]
+#       
+#       seq.info <- na.omit(seq.info) 
+#       
+#     seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+#     seq.indexes.downstream <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+#     #we have seq.info which gives us a gene name and its location on the chromosome
+#     
+#     for(j in 1 : dim(seq.info)[1]){
+#       #seq.indexes <- rbind(seq.indexes, cbind(seq.info[j,1],MM_snps[which(MM_snps$chr == seq.info[j,2] & MM_snps$pos > mean(as.numeric(seq.info[j,3:4])) - .07 & MM_snps$pos < mean(as.numeric(seq.info[j,3:4])) + .07), c(1,3)]))
+#       tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+#       #for each gene, select the marker closest to the middle of the gene: DEPRECATED
+#       # seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+#       #for each gene, select the closest upstream and downstream marker
+#       tmp.downstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) > 0,]
+#       seq.indexes.downstream[j,] <- as.matrix(cbind(seq.info[j,1],tmp.downstream[which.min(abs(tmp.downstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+#       
+#       tmp.upstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) < 0,]
+#       seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.upstream[which.min(abs(tmp.upstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+#       
+#     }
+#     
+#     probs.rows.up <- NULL
+#     probs.rows.down <- NULL
+#     
+#     gene.names <- seq.info[,1]
+#     
+#     #reformat correct dims of probs.rows
+#     for(i in 1: dim(seq.indexes)[1]) probs.rows.up <- cbind(probs.rows.up, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes[i,2]])
+#     
+#      for(i in 1: dim(seq.indexes)[1]) probs.rows.down <- cbind(probs.rows.down, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes.downstream[i,2]])
+#     
+# probs.rows <- Jovid::array.mean(abind::abind(probs.rows.up, probs.rows.down, along = 3))  
+#   
+# 
+# 
+# pls.svd <- mddsPLS(Xs = probs.rows, Y = tmp.Y, R = 12, lambda = .06)
+# # full.pred <- predict(pls.svd, probs.rows)
+# full.pred <- predict(pls.svd, probs.rows[c(which.min(pls.svd$mod$s[,1]), which.max(pls.svd$mod$s[,1])),])
+# process.scores <- (full.pred) %*% tmp.pca$rotation
+#  # process.scores <- colMeans(process.scores)
+# 
+# 
+#       }, error=function(e){cat("Bad annotation, retrying. ")})
+#   
+#    
+#    #if x < 0 flip both x and y
+#   #have to flip across mean of DO, not across 0
+#    # if(process.scores[1,1] < 0){
+#    # arrows(x0 = colMeans(Y) %*% tmp.pca$rotation[,1], y0 = colMeans(Y) %*% tmp.pca$rotation[,2], x1 = process.scores[1,1] * -1, y1 = process.scores[1,2] * -1, length = .05)
+#    #   
+#    #    # text(process.scores[1,1] * -2, process.scores[1,2] * -2, labels = process.name, col = 4, cex = .7)
+#    #   
+#    # } else {
+#    #   arrows(x0 = colMeans(Y) %*% tmp.pca$rotation[,1], y0 = colMeans(Y) %*% tmp.pca$rotation[,2], x1 = process.scores[1,1] * 1, y1 = process.scores[1,2] * 1, length = .05)
+#    #   
+#    #    # text(process.scores[1,1] * 2, process.scores[1,2] * 2, labels = process.name, col = 4, cex = .7)
+#    # }
+#   mag <- 4
+#   do.mean.proj <- colMeans(Y) %*% tmp.pca$rotation
+#   tmp.proc.score <- process.scores[which.max(process.scores[,1]),]
+#   #proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1)
+#   
+#   arrows(x0 = do.mean.proj[1], y0 = do.mean.proj[2], x1 = tmp.proc.score[1] + (tmp.proc.score[1] - do.mean.proj[1]) * mag, y1 = tmp.proc.score[2] + (tmp.proc.score[2] - do.mean.proj[2]) * mag, length = .05)
+#       
+#     text(tmp.proc.score[1] + (tmp.proc.score[1] - do.mean.proj[1]) * mag, tmp.proc.score[2] + (tmp.proc.score[2] - do.mean.proj[2]) * mag, labels = process.name, col = 4, cex = .7)
+#    # points(process.scores[,1], process.scores[,2], col = k)
+# }#end k
+
+
+```
+
+
+
+```{r process mutant morphospace}
+
+
+  tmp.mutant.registration <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lmsfin[])), 54, 3))$coords
+  tmp.mutant.mean <- gpagen(arrayspecs(rbind(Y, as.matrix(mutant.lmsfin)), 54, 3))$consensus
+  
+
+  mutant.2d <- two.d.array(tmp.mutant.registration[,,-(1:nrow(Y))])
+
+  tmp.Y <- two.d.array(tmp.mutant.registration[,,(1:nrow(Y))])
+  
+  tmp.pca <- prcomp(two.d.array(tmp.mutant.registration))
+  
+
+  mutant.scores <- mutant.2d %*% tmp.pca$rotation
+  
+  process.scores <- full.pred %*% tmp.pca$rotation
+  
+  # plot(tmp.pca$x, xlim = c(-.1, .1), ylim = c(-.05, .05))
+  plot(tmp.pca$x, typ = "n", xlim = c(-.05, .1), ylim = c(-.03, .03))
+  #mutant mean labels
+  
+  
+  mutant.mean.pc <- matrix(NA, nrow = length(unique(mutant.dbfin$Genotype)), ncol = 2)
+  # for(i in c(1:5,7:10,13:14,22:23,28:29,34,36:37,41:44,46:48,50:52,63:65)){
+   for(i in (1:length(unique(mutant.dbfin$Genotype)))){
+    mutant <- unique(mutant.dbfin$Genotype)[i]
+  mmean.score <- colMeans(mutant.scores[mutant.dbfin$Genotype == mutant,])
+  text(mmean.score[1], mmean.score[2], labels = mutant, col = 2, cex = .7)
+  mutant.mean.pc[i,2] <- mmean.score[2]
+mutant.mean.pc[i,1] <- mmean.score[1]
+
+  }
+  
+  # text(process.scores[1], process.scores[2], labels = process.name, col = 4, cex = .7)
+  # points(mutant.scores, col = 2)
+   # points(process.scores, col = 3)
+  points(tmp.Y %*% tmp.pca$rotation, col = adjustcolor("slategrey", alpha.f = .1))
+  
+  proc.score <- matrix(NA, nrow = 7, ncol = 3)
+  
+for(k in c(1:7)){
+  tryCatch({
+    process.name <- c("execution phase of apoptosis", "endochondral ossification", "bmp signaling pathway", "cranial suture morphogenesis", "wnt signaling pathway", "intraciliary transport", "neurotransmitter transport")[k]
+  # process.ano <- as.character(unique(DO.go[,2])[sample(1:length(unique(DO.go[,3])), size = 1)])
+  process.ano <- as.character(DO.go[DO.go[,3] == process.name,2])
+    # process.name <- as.character(unique(DO.go[,3])[unique(DO.go[,2]) == process.ano])
+#offline method for getting gene metadata
+      #pull gene names from process.ano (go terms)
+      coi <- c("ENSEMBL", "SYMBOL")
+      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+      
+      coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+      
+      symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+      
+      transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+      
+      #symbol, chr, start, end
+      chr_name <- rep(NA,  nrow(go2symbol))
+      gene.start <- rep(NA,  nrow(go2symbol))
+      gene.end <- rep(NA,  nrow(go2symbol))
+      
+      for(i in 1:length(unique(symbol2info$GENEID))){
+        
+        tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+        
+        chr_name[i] <- tmp.transcript$TXCHROM
+        gene.start[i] <- tmp.transcript$TXSTART
+        gene.end[i] <- tmp.transcript$TXEND
+        
+      }
+      
+      seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+      seq.info[,2] <- as.character(seq.info[,2])
+      seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+      
+    #get rid of weird chromosome names
+    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+    if(length(grep(seq.info$chromosome_name, pattern = "GL")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "GL"),]
+      
+      seq.info <- na.omit(seq.info) 
+      
+    seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    seq.indexes.downstream <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    #we have seq.info which gives us a gene name and its location on the chromosome
+    
+    for(j in 1 : dim(seq.info)[1]){
+      #seq.indexes <- rbind(seq.indexes, cbind(seq.info[j,1],MM_snps[which(MM_snps$chr == seq.info[j,2] & MM_snps$pos > mean(as.numeric(seq.info[j,3:4])) - .07 & MM_snps$pos < mean(as.numeric(seq.info[j,3:4])) + .07), c(1,3)]))
+      tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+      #for each gene, select the marker closest to the middle of the gene: DEPRECATED
+      # seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      #for each gene, select the closest upstream and downstream marker
+      tmp.downstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) > 0,]
+      seq.indexes.downstream[j,] <- as.matrix(cbind(seq.info[j,1],tmp.downstream[which.min(abs(tmp.downstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+      tmp.upstream <- tmp.indexes[tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])) < 0,]
+      seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.upstream[which.min(abs(tmp.upstream[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+      
+    }
+    
+    probs.rows.up <- NULL
+    probs.rows.down <- NULL
+    
+    gene.names <- seq.info[,1]
+    
+    #reformat correct dims of probs.rows
+    for(i in 1: dim(seq.indexes)[1]) probs.rows.up <- cbind(probs.rows.up, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes[i,2]])
+    
+     for(i in 1: dim(seq.indexes)[1]) probs.rows.down <- cbind(probs.rows.down, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes.downstream[i,2]])
+    
+probs.rows <- Jovid::array.mean(abind::abind(probs.rows.up, probs.rows.down, along = 3))  
+  
+
+
+pls.svd <- mddsPLS(Xs = probs.rows, Y = tmp.Y, R = 12, lambda = .06)
+# full.pred <- predict(pls.svd, probs.rows)
+full.pred <- predict(pls.svd, probs.rows[c(which.min(pls.svd$mod$s[,1]), which.max(pls.svd$mod$s[,1])),])
+process.scores <- (full.pred) %*% tmp.pca$rotation
+ # process.scores <- colMeans(process.scores)
+
+
+      }, error=function(e){cat("Bad annotation, retrying. ")})
+  
+   
+   #if x < 0 flip both x and y
+  #have to flip across mean of DO, not across 0
+   # if(process.scores[1,1] < 0){
+   # arrows(x0 = colMeans(Y) %*% tmp.pca$rotation[,1], y0 = colMeans(Y) %*% tmp.pca$rotation[,2], x1 = process.scores[1,1] * -1, y1 = process.scores[1,2] * -1, length = .05)
+   #   
+   #    # text(process.scores[1,1] * -2, process.scores[1,2] * -2, labels = process.name, col = 4, cex = .7)
+   #   
+   # } else {
+   #   arrows(x0 = colMeans(Y) %*% tmp.pca$rotation[,1], y0 = colMeans(Y) %*% tmp.pca$rotation[,2], x1 = process.scores[1,1] * 1, y1 = process.scores[1,2] * 1, length = .05)
+   #   
+   #    # text(process.scores[1,1] * 2, process.scores[1,2] * 2, labels = process.name, col = 4, cex = .7)
+   # }
+  mag <- 4
+  do.mean.proj <- colMeans(Y) %*% tmp.pca$rotation
+  tmp.proc.score <- process.scores[which.max(process.scores[,1]),]
+  #proj.coords.a1[i,] + (proj.coords.a1[i,] - proj.coords.a2[i,]) * (4 - 1)
+  
+  arrows(x0 = do.mean.proj[1], y0 = do.mean.proj[2], x1 = tmp.proc.score[1] + (tmp.proc.score[1] - do.mean.proj[1]) * mag, y1 = tmp.proc.score[2] + (tmp.proc.score[2] - do.mean.proj[2]) * mag, length = .05)
+      
+    text(tmp.proc.score[1] + (tmp.proc.score[1] - do.mean.proj[1]) * mag, tmp.proc.score[2] + (tmp.proc.score[2] - do.mean.proj[2]) * mag, labels = process.name, col = 4, cex = .7)
+    
+    proc.score[k,3] <-  tmp.proc.score[2] + (tmp.proc.score[2] - do.mean.proj[2]) * mag
+proc.score[k,2] <- tmp.proc.score[1] + (tmp.proc.score[1] - do.mean.proj[1]) * mag
+proc.score[k,1] <- process.name
+
+if(k == 2 | k == 4){#flip these two vectors to point towards mutants
+   proc.score[k,3] <-  tmp.proc.score[2] + (tmp.proc.score[2] - do.mean.proj[2]) * -(mag+1)
+proc.score[k,2] <- tmp.proc.score[1] + (tmp.proc.score[1] - do.mean.proj[1]) * -(mag+1)
+}
+    
+   # points(process.scores[,1], process.scores[,2], col = k)
+}#end k
+
+  
+  #try it in ggplot
+  mutant.mean.df <- data.frame(mutant = c(as.character(unique(mutant.dbfin$Genotype)), "DO mean"), scores = rbind(mutant.mean.pc, do.mean.proj[1:2]))
+mutant.mean.df[,1] <- as.character(mutant.mean.df[,1])
+colnames(mutant.mean.df) <- NULL
+mutant.mean.df <- data.frame(mutant = c(mutant.mean.df[,1], proc.score[,1]), scores = rbind(as.matrix(mutant.mean.df[,-1]), cbind(as.numeric(proc.score[,2]), as.numeric(proc.score[,3]))), Effect = c(rep("Mutant", 30), rep("Genomic", 8)))
+mutant.mean.df[,1] <- as.character(mutant.mean.df[,1])
+mutant.mean.df[5,1] <- "B9D1"
+mutant.mean.df[7,1] <- "Bmp2_7"
+mutant.mean.df[9,1] <- "Bmp7 cond"
+mutant.mean.df[10,1] <- "Crf4"
+mutant.mean.df[11,1] <- "Disp"
+mutant.mean.df[12,1] <- "Fgf10"
+mutant.mean.df[13,1] <- "Fgf3"
+mutant.mean.df[14,1] <- "Ghrhr"
+mutant.mean.df[16,1] <- "Grm1 cond"
+mutant.mean.df[17,1] <- "Hhat"
+mutant.mean.df[18,1] <- "Ift88"
+mutant.mean.df[19,1] <- "" #Lrp2
+mutant.mean.df[20,1] <- "Mceph"
+mutant.mean.df[22,1] <- "Nipbl"
+mutant.mean.df[24,1] <- "Nosip hom"
+mutant.mean.df[25,1] <- "" #Nosip het
+mutant.mean.df[26,1] <- "Papps2"
+mutant.mean.df[27,1] <- "Pten het"
+mutant.mean.df[28,1] <- "Pten hom"
+mutant.mean.df[29,1] <- "Shh"
+mutant.mean.df[8,1] <- "" #Bmp7
+mutant.mean.df[,2] <- as.numeric(mutant.mean.df[,2])
+mutant.mean.df[,3] <- as.numeric(mutant.mean.df[,3])
+#maybe color by type of mutant or pathway, or mutant vs genomic estimate
+colnames(proc.score) <- c("process", "score1", "score2")
+  
+  
+  
+  
+ # png("/mnt/Hallgrimsson/Users/Jovid/DOMGP/figures/morphospace_DOMGP2.png", width = 550, height = 350)  
+  
+  ggplot(mutant.mean.df, aes(x = scores.1, y = scores.2, label = mutant, color = Effect)) +
+geom_point(colour = 1, size = .75) +
+    stat_ellipse(data = mutant.mean.df[mutant.mean.df$Effect == "Genomic",], linetype = 2, alpha = .05, geom = "polygon") +
+xlab("PC1 (11.2% var)") +
+ylab("PC2 (3.9% var)") +
+geom_segment(aes(x = do.mean.proj[1], y = do.mean.proj[2], xend = as.numeric(proc.score[1,2]), yend = as.numeric(proc.score[1,3])), size = .4) +
+geom_segment(aes(x = do.mean.proj[1], y = do.mean.proj[2], xend = as.numeric(proc.score[2,2]), yend = as.numeric(proc.score[2,3])), size = .4) +
+geom_segment(aes(x = do.mean.proj[1], y = do.mean.proj[2], xend = as.numeric(proc.score[3,2]), yend = as.numeric(proc.score[3,3])), size = .4) +
+geom_segment(aes(x = do.mean.proj[1], y = do.mean.proj[2], xend = as.numeric(proc.score[4,2]), yend = as.numeric(proc.score[4,3])), size = .4) +
+geom_segment(aes(x = do.mean.proj[1], y = do.mean.proj[2], xend = as.numeric(proc.score[5,2]), yend = as.numeric(proc.score[5,3])), size = .4) +
+geom_segment(aes(x = do.mean.proj[1], y = do.mean.proj[2], xend = as.numeric(proc.score[6,2]), yend = as.numeric(proc.score[6,3])), size = .4) +
+geom_segment(aes(x = do.mean.proj[1], y = do.mean.proj[2], xend = as.numeric(proc.score[7,2]), yend = as.numeric(proc.score[7,3])), size = .4) +
+ggrepel::geom_label_repel(segment.alpha = .2, size = 3.5, max.iter = 5000) +
+scale_color_manual(values=c("#E69F00", "black")) +    
+theme_bw()
+  
+   # dev.off()
+  
+  
+
+```
+
+```{r mutant morphospace phenotype extremes}
+#plot pc1 heatmap
+  proj.coords.a1 <- row2array3d(max(tmp.pca$x[,1]) * tmp.pca$rotation[,1], Nlandmarks = 54) + tmp.mutant.mean
+  proj.coords.a2<- row2array3d(min(tmp.pca$x[,1]) * tmp.pca$rotation[,1], Nlandmarks = 54) + tmp.mutant.mean
+  
+  # #heatmap time
+  shape.mean2 <- file2mesh("Mouse Morph_remeshed.ply")
+   shape.mean.lms <- as.matrix(read.table("morph_lm.txt"))
+  
+   
+  # 
+  a1.mesh <- tps3d(shape.mean$mesh, fixed.do.mean, proj.coords.a1)
+  a1.mesh <- tps3d(shape.mean2, shape.mean.lms, proj.coords.a1)
+  a2.mesh <- tps3d(a1.mesh, proj.coords.a1, proj.coords.a2)
+
+  par3d(zoom = .75)
+  aspect3d("iso")
+  bg3d("white")
+  meshDist(a1.mesh, a2.mesh, displace = F, shade = T, alpha = 1)
+
+  rglwidget()
+  
+  #   bg3d("white")
+  # plot3d(a1.mesh, col = rgb(1,0,0, alpha = .1), alpha = .2)
+  # plot3d(a2.mesh, col = rgb(0,0,1, alpha = .1), alpha = .2, add = T)
+  # rglwidget()
+  
+  #plot pc2 heatmap
+  
+   # shape.mean.lms[17:18,] <- shape.mean.lms[18:17,]
+   # shape.mean.lms[10:11,] <- shape.mean.lms[11:10,]
+   # shape.mean.lms[48:49,] <- shape.mean.lms[49:48,]
+   # shape.mean.lms[41:42,] <- shape.mean.lms[42:41,]
+  proj.coords.a1 <- row2array3d(max(tmp.pca$x[,2]) * tmp.pca$rotation[,2], Nlandmarks = 54) + tmp.mutant.mean
+  proj.coords.a2<- row2array3d(min(tmp.pca$x[,2]) * tmp.pca$rotation[,2], Nlandmarks = 54) + tmp.mutant.mean
+  
+  a1.mesh <- tps3d(shape.mean$mesh, fixed.do.mean, proj.coords.a1)
+  a1.mesh <- tps3d(shape.mean2, shape.mean.lms, proj.coords.a1)
+  a2.mesh <- tps3d(a1.mesh, proj.coords.a1, proj.coords.a2)
+  
+  #   bg3d("white")
+  # plot3d(a1.mesh, col = rgb(1,0,0, alpha = .1), alpha = .2)
+  # plot3d(a2.mesh, col = rgb(0,0,1, alpha = .1), alpha = .2, add = T)
+  # rglwidget()
+  
+    par3d(zoom = .75)
+  aspect3d("iso")
+    bg3d("white")
+  a <- meshDist(a1.mesh, a2.mesh, displace = F, shade = T, alpha = 1, axes = F, box = F, plot = T)
+  plot3d(a$colMesh, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "")
+  rglwidget()
+  
+ 
+
+```
+
+Pick select processes and estimate their directions and magnitudes. then build a tree out of the simliarities.
+
+If we include processes that span the hierarchy of development, do we get a structured tree like we would expect?
+
+Growth -> Muscle development | brain | cartilage -> osteogenesis -> neural crest cell migration 
+
+```{r hierarchical tree}
+
+#processes with multiple "large" effects: emt, bone development, forebrain, endochondral ossification, ap
+
+tree.processes <- c("cell proliferation", "regulation of apoptotic process", "epithelial to mesenchymal transition","positive regulation of skeletal muscle tissue growth", "bone development","forebrain development", "endochondral ossification", "intramembranous ossification", "neural crest cell migration", "fibroblast growth factor receptor signaling pathway", "bmp signaling pathway", "dorsal/ventral pattern formation", "anterior/posterior pattern specification", "neural tube patterning", "craniofacial suture morphogenesis")
+
+tree.loadings <- matrix(NA, nrow = 162, ncol = length(tree.processes))
+
+tree.explained <- rep(NA, length(tree.processes))
+
+#process.value <- rep(NA, ncol(process.loadings))
+tree.g.loadings <- NULL
+ngenes.tree <- rep(NA, length(tree.processes))
+
+for(k in 1:length(tree.processes)){
+  
+process.ano <- as.character(DO.go[DO.go[,3] == tree.processes[k], 2])  
+
+#offline method for getting gene metadata
+      #pull gene names from process.ano (go terms)
+      coi <- c("ENSEMBL", "SYMBOL")
+      go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+      
+      ngenes.tree[k] <- nrow(go2symbol)
+      
+      coi2 <- c("TXCHROM", "TXSTART", "TXEND")
+      
+      symbol2info <- AnnotationDbi::select(mmusculusEnsembl, keys = go2symbol[,2], columns = coi2, keytype="GENEID")
+      
+      symbol2info <- na.omit(symbol2info)
+      
+      transcipt.size <- abs(symbol2info[,3] - symbol2info[,4])
+      
+      #symbol, chr, start, end
+      chr_name <- rep(NA,  nrow(go2symbol))
+      gene.start <- rep(NA,  nrow(go2symbol))
+      gene.end <- rep(NA,  nrow(go2symbol))
+      
+      for(i in 1:length(unique(symbol2info$GENEID))){
+        
+        tmp.transcript <- symbol2info[symbol2info[,1] == unique(symbol2info$GENEID)[i],][which.max(transcipt.size[symbol2info[,1] == unique(symbol2info$GENEID)[i]]),]
+        
+        chr_name[i] <- tmp.transcript$TXCHROM
+        gene.start[i] <- tmp.transcript$TXSTART
+        gene.end[i] <- tmp.transcript$TXEND
+        
+      }
+      
+      seq.info <- data.frame(mgi_symbol = go2symbol$SYMBOL, chromosome_name = chr_name, start_position = gene.start, end_position = gene.end)
+      seq.info[,2] <- as.character(seq.info[,2])
+      seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6  
+      seq.info <- na.omit(seq.info)
+      
+    #biomart method for getting gene metadata
+    # seq.info <- getBM(attributes = c("mgi_symbol", "chromosome_name", "start_position", "end_position") , filters = "go" , values = process.ano ,mart = mouse)
+    # seq.info[,3:4] <- as.matrix(seq.info[,3:4])/1e6
+    #get rid of weird chromosome names
+    if(length(grep(seq.info$chromosome_name, pattern = "CHR")) > 0) seq.info <- seq.info[-grep(seq.info$chromosome_name, pattern = "CHR"),]
+    
+    seq.indexes <- matrix(NA, ncol = 3, nrow = dim(seq.info)[1])
+    #we have seq.info which gives us a gene name and its location on the chromosome
+    
+    for(j in 1 : dim(seq.info)[1]){
+      #seq.indexes <- rbind(seq.indexes, cbind(seq.info[j,1],MM_snps[which(MM_snps$chr == seq.info[j,2] & MM_snps$pos > mean(as.numeric(seq.info[j,3:4])) - .07 & MM_snps$pos < mean(as.numeric(seq.info[j,3:4])) + .07), c(1,3)]))
+      tmp.indexes <-  combined.markers[which(combined.markers$chr == seq.info[j,2] & combined.markers$Mbp_mm10 > mean(as.numeric(seq.info[j,3:4])) - 2 & combined.markers$Mbp_mm10 < mean(as.numeric(seq.info[j,3:4])) + 2), c(1,3)]
+      #for each gene, select the marker closest to the middle of the gene
+      seq.indexes[j,] <- as.matrix(cbind(seq.info[j,1],tmp.indexes[which.min(abs(tmp.indexes[,2] - mean(as.numeric(seq.info[j,3:4])))),]))
+    }
+    
+    probs.rows <- NULL
+    
+    gene.names <- seq.info[,1]
+    
+    # Y <- big.Y()[[1]][1:1140,]
+    #use list of marker names to call on probs and build probs.rows for the custom set
+    #reformat correct dims of probs.rows
+    for(i in 1: dim(seq.indexes)[1]) probs.rows <- cbind(probs.rows, DO.probs[,,dimnames(DO.probs)[[3]] == seq.indexes[i,2]])
+
+#pls.svd <- pls2B(x = probs.rows, y = Y)$svd
+pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = 1, lambda = .06)
+
+#barplots of genetic effects
+do.names <- c("A/J", "C57BL/6J", "129S1/SvImJ", "NOD/ShiLtJ", "NZO/HlLtJ", "CAST/EiJ", "PWK/PhJ", "WSB/EiJ")
+do.colors <- c("A/J" = "#F0F000","C57BL/6J" = "#808080", "129S1/SvImJ"= "#F08080", "NOD/ShiLtJ" = "#1010F0","NZO/HlLtJ" = "#00A0F0","CAST/EiJ" = "#00A000", "PWK/PhJ" = "#F00000", "WSB/EiJ" = "#9000E0")
+
+pathway.loadings <- data.frame(gloadings = pls.svd$mod$u[[1]], gnames = (as.character(rep(seq.info[,1], each = 8))), founders = rep(do.names, nrow(seq.info)))
+
+ultimate_theme <-   theme(
+        text = element_text(size=6), 
+        axis.text.x = element_text(angle = 75, hjust = 1),
+        axis.title.x = element_text(margin = margin(t = 20)),
+        axis.text = element_text(angle = 55, hjust = 1, size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 8, face = "bold", hjust = .5))
+
+p <- ggplot() +
+  geom_bar(data = pathway.loadings, 
+           aes(x = gnames, y = gloadings), 
+           stat = "identity", 
+           width = .75, 
+           position=position_dodge()) +
+  geom_point(data = pathway.loadings,
+             aes(x = gnames, y = gloadings, color = founders),
+             shape = "-",
+             size = 10) +
+  scale_color_manual(values=do.colors, 
+                      guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 1))) +
+  xlab("Gene") +
+  ylab("Genetic marker loading") + 
+  ultimate_theme
+
+#loop breaks on 13 & 14 because of / in the process name
+pdf(paste0("mgp_barplots/", tree.processes[k], "_MGP.pdf"), width = 11.5, height = 5.5)
+print(p)
+dev.off()
+
+tree.g.loadings[[k]] <- pls.svd$mod$u[[1]][,1]
+
+tree.loadings[,k] <- pls.svd$mod$v[,1]
+
+full.pred <- predict(pls.svd, probs.rows)
+
+ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+
+tree.explained[k] <- ess/(rss + ess)
+
+print(k)
+}#end k
+
+
+tree.cor <- abs(cor(tree.loadings))
+colnames(tree.cor) <- tree.processes
+rownames(tree.cor) <- tree.processes
+
+
+heatmap(1-tree.cor, labRow = tree.processes, labCol = tree.processes, symm = T, margins = c(7,13), )
+
+heatmaply::heatmaply(tree.cor, symm = T, plot_method = "ggplot") #Rowv = NULL,
+
+# plot(process.r2 ~ ngenes.random, xlim = c(0,250))
+# points(tree.explained*100 ~ ngenes.tree, col =2, pch = 19)
+
+
+```
+
+
