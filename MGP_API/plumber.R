@@ -227,11 +227,10 @@ cors <- function(res) {
 
 function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
   future::future({
-    print(GO.term)
     
     GO.term <- strsplit(GO.term, split = ",")[[1]]
-    
     mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = Y, pls_axis = as.numeric(pls_axis))
+    
   })
 }
 
@@ -243,8 +242,10 @@ function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
 
 function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1) {
   future::future({
+    
     custom.mgp(genelist = genelist, lambda = as.numeric(lambda), Y = Y, pls_axis = as.numeric(pls_axis))
-  })
+  
+    })
 }
 
 
