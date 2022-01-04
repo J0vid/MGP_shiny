@@ -63,3 +63,37 @@ segments3d(x = rbind(MGP_result$pheno1[,1], MGP_result$pheno2[,1]  + ((MGP_resul
 # 
 # plot3d(my_morph, col = adjustcolor("lightgrey", .3), alpha = .9, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
 
+#elife style ordered plots####
+pathway.loadings <- MGP_result$loadings
+bar_order <- pathway.loadings %>% 
+  group_by(gnames) %>%
+  summarise(test = diff(range(gloadings))) %>%
+  arrange(-test) 
+
+pathway.loadings$gnames <- factor(pathway.loadings$gnames, levels = lapply(bar_order, as.character)$gnames)
+
+
+ggplot() +
+  geom_bar(data = pathway.loadings,
+           aes(x = gnames, y = gloadings),
+           stat = "identity",
+           width = .75,
+           position=position_dodge()) +
+  geom_point(data = pathway.loadings,
+             aes(x = gnames, y = gloadings, color = founders),
+             shape = "-",
+             size = 15) +
+  scale_color_manual(values=do.colors,
+                     guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 1))) +
+  xlab("Gene") +
+  ylab("Genetic marker loading") +
+  theme(text = element_text(size=6),
+        axis.text.x = element_text(angle = 75, hjust = 1),
+        axis.title.x = element_text(margin = margin(t = 20)),
+        axis.text = element_text(angle = 55, hjust = 1, size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 8, face = "bold", hjust = .5))
+
+
+
