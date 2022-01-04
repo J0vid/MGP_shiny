@@ -223,15 +223,19 @@ cors <- function(res) {
 #* @param GO.term GO term to run
 #* @param lambda Regularization strength
 #* @param pls_axis how many axes to return
+#* @param pheno what phenotype to use
 #* @get /mgp
 
-function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
+function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1, pheno = "Y", pheno_index = "1:54") {
   future::future({
     print(GO.term)
     
     GO.term <- strsplit(GO.term, split = ",")[[1]]
+    coordinate.table <- matrix(1:(54 * 3), ncol = 3, byrow = T)
+    selected.pheno <- eval(parse(text = pheno_index))
+    pheno.xyz <- as.numeric(t(coordinate.table[selected.pheno,]))
     
-    mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = Y, pls_axis = as.numeric(pls_axis))
+    mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis))
   })
 }
 
@@ -241,9 +245,14 @@ function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
 #* @param pls_axis how many axes to return
 #* @get /custom_mgp
 
-function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1) {
+function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1,  pheno = "Y", pheno_index = "1:54") {
   future::future({
-    custom.mgp(genelist = genelist, lambda = as.numeric(lambda), Y = Y, pls_axis = as.numeric(pls_axis))
+    
+    coordinate.table <- matrix(1:(54 * 3), ncol = 3, byrow = T)
+    selected.pheno <- eval(parse(text = pheno_index))
+    pheno.xyz <- as.numeric(t(coordinate.table[selected.pheno,]))
+    
+    custom.mgp(genelist = genelist, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis))
   })
 }
 
