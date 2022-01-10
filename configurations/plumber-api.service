@@ -1,0 +1,15 @@
+[Unit]
+Description=Plumber API
+# After=sqlite3
+# (or mariadb, mysql, etc if you use a DB with Plumber, otherwise leave this commented)
+
+[Service]
+ExecStart=/usr/bin/Rscript -e "library(plumber); pr('/home/jose.aponte/shiny/MGP/MGP_API/plumber.R') %>% pr_run(port=3636, host='0.0.0.0')"
+Restart=on-abnormal
+WorkingDirectory=/data/MGP_data/
+
+[Install]
+WantedBy=multi-user.target
+
+#sudo systemctl enable plumber-api  # automatically start the service when the server boots
+#sudo systemctl start plumber-api   # start the service right now

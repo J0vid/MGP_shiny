@@ -236,6 +236,7 @@ function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1, ph
     pheno.xyz <- as.numeric(t(coordinate.table[selected.pheno,]))
     
     mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis))
+
   })
 }
 
@@ -244,6 +245,7 @@ function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1, ph
 #* @param lambda Regularization strength
 #* @param pls_axis how many axes to return
 #* @get /custom_mgp
+
 
 function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1,  pheno = "Y", pheno_index = "1:54") {
   future::future({
@@ -254,6 +256,7 @@ function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1, 
     
     custom.mgp(genelist = genelist, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis))
   })
+
 }
 
 
@@ -327,3 +330,44 @@ function(process = "chondrocyte differentiation") {
     
   })
 }
+
+
+#* Get the entire GO network for a process or gene list
+#* @param genelist custom comma-separated list of genes
+#* @param process process name
+#* @get /GO_network
+function(genelist = NULL, process = NULL){
+future_promise({
+  if(is.null(genelist) == F){
+selection.vector <- as.character(strsplit(genelist, ", ")[[1]])
+coi <- c("ENSEMBL", "SYMBOL")
+gene2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = selection.vector, columns = coi, keytype = "SYMBOL")))
+
+coi2 <- c("GO", "SYMBOL")
+ensembl2go <- AnnotationDbi::select(org.Mm.eg.db, keys = gene2symbol[,2], columns = coi2, keytype="ENSEMBL")
+
+GO_ensembl_join <- right_join(DO.go, ensembl2go, by = c("V2" = "GO"))
+}
+
+  if(is.null(process) == F){
+    
+    selection.vector <- c(process)
+  
+    process.ano <- NULL
+    for(i in 1: length(selection.vector)) process.ano <- c(process.ano, as.character(DO.go[DO.go[,3] == selection.vector[i], 2]))
+    coi <- c("ENSEMBL", "SYMBOL")
+    go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+    coi2 <- c("GO", "SYMBOL")
+    ensembl2go <- AnnotationDbi::select(org.Mm.eg.db, keys = go2symbol[,2], columns = coi2, keytype="ENSEMBL")
+    GO_ensembl_join <- right_join(DO.go, ensembl2go, by = c("V2" = "GO"))
+  }
+  
+  return(GO_ensembl_join)
+  
+})
+}
+
+
+
+
+

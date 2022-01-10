@@ -8,9 +8,11 @@ raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api", "/cus
                            query = list(genelist = genelist),
                            encode = "json")
 
+
 # raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api", "/mgp"),
 #                          query = list(GO.term = "chondrocyte differentiation", lambda = .075),
 #                          encode = "json")
+
 
 MGP_result <- jsonlite::fromJSON(httr::content(raw_api_res, "text"))
 
@@ -62,6 +64,7 @@ segments3d(x = rbind(MGP_result$pheno1[,1], MGP_result$pheno2[,1]  + ((MGP_resul
 #            z = rbind(MGP_result$pheno1[,3], MGP_result$pheno2[,3]  + ((MGP_result$pheno2[,3] - MGP_result$pheno1[,3]) * (pheno_mag - 1))),
 #            lwd = 3)
 
+
 #elife style ordered plots####
 pathway.loadings <- MGP_result$loadings
 bar_order <- pathway.loadings %>% 
@@ -94,11 +97,9 @@ ggplot() +
         legend.text = element_text(size = 8),
         legend.title = element_text(size = 8, face = "bold", hjust = .5))
 
-
-
-
-
-
-
+#generate phenotype morphs####
+# my_morph <- tps3d(mesh, mesh_lms, MGP_result$pheno1)
+# 
+# plot3d(my_morph, col = adjustcolor("lightgrey", .3), alpha = .9, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
 
 
