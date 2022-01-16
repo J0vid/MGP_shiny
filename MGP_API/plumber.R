@@ -6,6 +6,8 @@ library(GenomicFeatures)
 library(org.Mm.eg.db)
 library(dplyr)
 library(dbplyr)
+library(future)
+library(promises)
 future::plan("multicore")
 
 
@@ -32,7 +34,7 @@ DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
 # DO_probs_DB <- src_sqlite("/data/MGP_data/MGP_genotypes.sqlite")
 
 #core mgp function####
-mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06, pls_axis = 1){
+mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06, pls_axis = 1, permutation = F){
   
   selection.vector <- GO.term
   # selection.vector <- process.list()[[1]][process.list()[[2]] %in% input$variables2]
@@ -94,6 +96,25 @@ mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06
     pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = pls_axis, lambda = pls.svd.cv$Optim$optim_para_one[1])
   } else {pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = pls_axis, lambda = lambda)
   }
+  
+  approximate.p <- NULL
+  if(permutation > 0){
+    perm.result <- rep(NA, permutation)
+    for(i in 1:length(perm.result)){
+    process.svd <- mddsPLS(Xs = probs.rows, Y = as.matrix(Y[sample(1:nrow(Y), size = nrow(Y)),]), R = pls_axis, lambda = lambda)
+    
+    full.pred <- predict(process.svd, probs.rows)$y
+    ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+    rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+    perm.result[i] <- ess/(rss + ess)
+    }
+    
+    full.pred <- predict(pls.svd, probs.rows)$y
+    ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+    rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+    approximate.p <- sum(ess/(rss + ess) < perm.result)/length(perm.result)
+  }
+  
   #cache to pls list for new analyses
   results <- list(pls.svd, gene.names, seq.info, probs.rows)
   
@@ -125,11 +146,11 @@ mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06
   proj.coords.a2 <- proj.coords.a1[,,2]
   proj.coords.a1 <- proj.coords.a1[,,1]
 
-  return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis]))
+  return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis], p_value = approximate.p))
 }
 
 #custom MGP function####
-custom.mgp <- function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), Y, cv = F, lambda = .06, pls_axis = 1){
+custom.mgp <- function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), Y, cv = F, lambda = .06, pls_axis = 1, permutation = 0){
   
   selection.vector <- as.character(strsplit(genelist, ", ")[[1]])
     coi <- c("ENSEMBL", "SYMBOL")
@@ -173,6 +194,25 @@ custom.mgp <- function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), Y, cv = F, lam
     for(i in 1:nrow(seq.indexes)) probs.rows[, probrowseq[i]:(probrowseq[i+1] - 1) ] <- as.matrix(collect(tbl(DO_probs_DB, seq.indexes[i,2])))
     pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = pls_axis, lambda = lambda)
     
+    approximate.p <- NULL
+    if(permutation > 0){
+      perm.result <- rep(NA, permutation)
+      for(i in 1:length(perm.result)){
+        process.svd <- mddsPLS(Xs = probs.rows, Y = as.matrix(Y[sample(1:nrow(Y), size = nrow(Y)),]), R = pls_axis, lambda = lambda)
+        
+        full.pred <- predict(process.svd, probs.rows)$y
+        ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+        rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+        perm.result[i] <- ess/(rss + ess)
+      }
+      
+      full.pred <- predict(pls.svd, probs.rows)$y
+      ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+      rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+      approximate.p <- sum(ess/(rss + ess) < perm.result)/length(perm.result)
+    }
+    
+    
     results <- list(pls.svd, gene.names, seq.info, probs.rows)
     
     tmp.reactive <- results
@@ -203,7 +243,7 @@ custom.mgp <- function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), Y, cv = F, lam
     proj.coords.a2 <- proj.coords.a1[,,2]
     proj.coords.a1 <- proj.coords.a1[,,1]
     
-    return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis]))
+    return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis], p_value = approximate.p))
 }
 
 #set CORS parameters####
@@ -223,13 +263,20 @@ cors <- function(res) {
 #* @param GO.term GO term to run
 #* @param lambda Regularization strength
 #* @param pls_axis how many axes to return
+#* @param pheno what phenotype to use
+#* @param permutation how many permutations should we use for testing? Max 200.
 #* @get /mgp
 
-function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
+function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1, pheno = "Y", pheno_index = "1:54", permutation = 0) {
   future::future({
+    print(GO.term)
     
     GO.term <- strsplit(GO.term, split = ",")[[1]]
-    mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = Y, pls_axis = as.numeric(pls_axis))
+    coordinate.table <- matrix(1:(54 * 3), ncol = 3, byrow = T)
+    selected.pheno <- eval(parse(text = pheno_index))
+    pheno.xyz <- as.numeric(t(coordinate.table[selected.pheno,]))
+    
+    mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis), permutation = permutation)
     
   })
 }
@@ -238,14 +285,21 @@ function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1) {
 #* @param genelist comma-separated list of gene names
 #* @param lambda Regularization strength
 #* @param pls_axis how many axes to return
+#* @param pheno what phenotype to use
+#* @param permutation should we run a permutation test?
 #* @get /custom_mgp
 
-function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1) {
+
+function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1,  pheno = "Y", pheno_index = "1:54", permutation = 0) {
   future::future({
     
-    custom.mgp(genelist = genelist, lambda = as.numeric(lambda), Y = Y, pls_axis = as.numeric(pls_axis))
-  
-    })
+    coordinate.table <- matrix(1:(54 * 3), ncol = 3, byrow = T)
+    selected.pheno <- eval(parse(text = pheno_index))
+    pheno.xyz <- as.numeric(t(coordinate.table[selected.pheno,]))
+    
+    custom.mgp(genelist = genelist, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis), permutation = permutation)
+  })
+
 }
 
 
@@ -319,3 +373,65 @@ function(process = "chondrocyte differentiation") {
     
   })
 }
+
+
+#* Get the entire GO network for a process or gene list
+#* @param genelist custom comma-separated list of genes
+#* @param process process name
+#* @get /GO_network
+function(genelist = NULL, process = NULL){
+future_promise({
+  if(is.null(genelist) == F){
+selection.vector <- as.character(strsplit(genelist, ", ")[[1]])
+coi <- c("ENSEMBL", "SYMBOL")
+gene2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = selection.vector, columns = coi, keytype = "SYMBOL")))
+
+coi2 <- c("GO", "SYMBOL")
+ensembl2go <- AnnotationDbi::select(org.Mm.eg.db, keys = gene2symbol[,2], columns = coi2, keytype="ENSEMBL")
+
+GO_ensembl_join <- right_join(DO.go, ensembl2go, by = c("V2" = "GO"))
+}
+
+  if(is.null(process) == F){
+    
+    selection.vector <- c(process)
+  
+    process.ano <- NULL
+    for(i in 1: length(selection.vector)) process.ano <- c(process.ano, as.character(DO.go[DO.go[,3] == selection.vector[i], 2]))
+    coi <- c("ENSEMBL", "SYMBOL")
+    go2symbol <- unique(na.omit(AnnotationDbi::select(org.Mm.eg.db, keys = process.ano, columns = coi, keytype = "GO")[,-2:-3]))
+    coi2 <- c("GO", "SYMBOL")
+    ensembl2go <- AnnotationDbi::select(org.Mm.eg.db, keys = go2symbol[,2], columns = coi2, keytype="ENSEMBL")
+    GO_ensembl_join <- right_join(DO.go, ensembl2go, by = c("V2" = "GO"))
+  }
+  
+  return(GO_ensembl_join)
+  
+})
+}
+
+#* Get the list of mutants to make comparisons with
+#* @get /mutant_list
+function(){
+  future_promise({
+    as.character(unique(mutant.db$Genotype))
+  })
+}
+
+#* mutant vector correlation to MGP vector
+#* @param MGP_pheno_loadings phenotype loadings from MGP model
+#* @param mutant selected mutant from /mutant_list
+#* @serializer print
+#* @get /mutant_comparison
+function(MGP_pheno_loadings = NULL, mutant = "Bmp2"){
+  future_promise({
+    MGP_pheno_loadings <- as.numeric(strsplit(MGP_pheno_loadings, ", ")[[1]])
+    tmp.mutant.registration <- geomorph::gpagen(geomorph::arrayspecs(rbind(Y, as.matrix(mutant.lms[mutant.db$Genotype == mutant,])), 54, 3))$coords
+    mutant.loadings <- as.numeric(manova(geomorph::two.d.array(tmp.mutant.registration) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == mutant))))$coef[2,])
+    
+    mutant.cor <- cor.test(as.numeric(MGP_pheno_loadings), mutant.loadings)
+    
+    return(mutant.cor)
+  })
+}
+

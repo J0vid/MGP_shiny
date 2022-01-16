@@ -8,6 +8,12 @@ raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api", "/cus
                            query = list(genelist = genelist),
                            encode = "json")
 
+
+# raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api", "/mgp"),
+#                          query = list(GO.term = "chondrocyte differentiation", lambda = .075),
+#                          encode = "json")
+
+
 MGP_result <- jsonlite::fromJSON(httr::content(raw_api_res, "text"))
 
 #have a look at the structure of the reponse. $loadings helps with plotting genetic effects, $pheno1 and $pheno2 show the extremes of the PLS axis. $pheno_loadings will help if you want to make a vector correlation to a mutant
@@ -58,10 +64,6 @@ segments3d(x = rbind(MGP_result$pheno1[,1], MGP_result$pheno2[,1]  + ((MGP_resul
 #            z = rbind(MGP_result$pheno1[,3], MGP_result$pheno2[,3]  + ((MGP_result$pheno2[,3] - MGP_result$pheno1[,3]) * (pheno_mag - 1))),
 #            lwd = 3)
 
-#generate phenotype morphs####
-# my_morph <- tps3d(mesh, mesh_lms, MGP_result$pheno1)
-# 
-# plot3d(my_morph, col = adjustcolor("lightgrey", .3), alpha = .9, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
 
 #elife style ordered plots####
 pathway.loadings <- MGP_result$loadings
@@ -95,5 +97,42 @@ ggplot() +
         legend.text = element_text(size = 8),
         legend.title = element_text(size = 8, face = "bold", hjust = .5))
 
+#generate phenotype morphs####
+# my_morph <- tps3d(mesh, mesh_lms, MGP_result$pheno1)
+# 
+# plot3d(my_morph, col = adjustcolor("lightgrey", .3), alpha = .9, specular = 1, axes = F, box = F, xlab = "", ylab = "", zlab = "", main = "", aspect = "iso")
+
+
+#elife style ordered plots####
+pathway.loadings <- MGP_result$loadings
+bar_order <- pathway.loadings %>% 
+  group_by(gnames) %>%
+  summarise(test = diff(range(gloadings))) %>%
+  arrange(-test) 
+
+pathway.loadings$gnames <- factor(pathway.loadings$gnames, levels = lapply(bar_order, as.character)$gnames)
+
+
+ggplot() +
+  geom_bar(data = pathway.loadings,
+           aes(x = gnames, y = gloadings),
+           stat = "identity",
+           width = .75,
+           position=position_dodge()) +
+  geom_point(data = pathway.loadings,
+             aes(x = gnames, y = gloadings, color = founders),
+             shape = "-",
+             size = 15) +
+  scale_color_manual(values=do.colors,
+                     guide = guide_legend(title = "Founder\nGenotype", override.aes = list(shape = rep(19, 8), size = 1))) +
+  xlab("Gene") +
+  ylab("Genetic marker loading") +
+  theme(text = element_text(size=6),
+        axis.text.x = element_text(angle = 75, hjust = 1),
+        axis.title.x = element_text(margin = margin(t = 20)),
+        axis.text = element_text(angle = 55, hjust = 1, size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 8, face = "bold", hjust = .5))
 
 
