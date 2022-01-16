@@ -226,7 +226,7 @@ server <- function(input, output){
     tmp.lambda <- input$lambda
     #debug: process.svd <- reactive({
     future::future({
-      raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/mgp"),
+      raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636/MGP", "/mgp"),
                              query = list(GO.term = selection.vector, lambda = tmp.lambda),
                              encode = "json")
       print(jsonlite::fromJSON(httr::content(raw_api_res, "text")))
@@ -386,7 +386,7 @@ server <- function(input, output){
     tmp.list <- input$custom_process
     tmp.lambda <- input$lambda2
     future::future({
-      raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636", "/custom_mgp"),
+      raw_api_res <- httr::GET(url = paste0("http://127.0.0.1:3636/MGP", "/custom_mgp"),
                                query = list(genelist = tmp.list, lambda = tmp.lambda),
                                encode = "json")
       jsonlite::fromJSON(httr::content(raw_api_res, "text"))
@@ -566,7 +566,7 @@ server <- function(input, output){
   #meta-analysis of user selections####
   #convert cached.params from GO to process names
   correlation_draw <- eventReactive(input$redraw_cors, {  
-    raw_api_res <- httr::POST(url = paste0("http://127.0.0.1:3636", "/mgp_cor"), encode = "json")
+    raw_api_res <- httr::POST(url = paste0("http://127.0.0.1:3636/MGP", "/mgp_cor"), encode = "json")
     cormat <- jsonlite::fromJSON(httr::content(raw_api_res, "text"))
     cormat$cormat <- abs(cormat$cormat)
     colnames(cormat$cormat) <- cormat$process.names
