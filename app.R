@@ -25,8 +25,8 @@ future::plan("multisession")
 #save(combined.markers, giga.pca, mutant.db, mutant.lms, shape.mean, Y, file = "~/shiny/shinyapps/MGP/shiny_data2.Rdata")
 
 #local dirs
-# mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
-# load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
+mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
+load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
 # load("~/shiny/shinyapps/MGP/cached.results.Rdata")
 # DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
 # # DO_probs_DB <- s3read_using(FUN = src_sqlite, object = "s3://mgpgenotypes/MGP_genotypes.sqlite") #src_sqlite("mgpgenotypes.s3.ca-central-1.amazonaws.com/MGP_genotypes.sqlite")
@@ -130,14 +130,7 @@ body <- dashboardBody(useShinyjs(),
                                            status = "warning",
                                            solidHeader = F,
                                            width = 12,
-                                           withSpinner(rglwidgetOutput("process_heatmap", width = "95%"), type = 6, color = "#a6192e")),
-                                       box(title = tags$b("Mutant DB"),
-                                           status = "warning",
-                                           solidHeader = F,
-                                           width = 12,
-                                           collapsed = T,
-                                           collapsible = T,
-                                           dataTableOutput("mutantdb"))
+                                           withSpinner(rglwidgetOutput("process_heatmap", width = "95%"), type = 6, color = "#a6192e"))
                               ),
                               tabPanel("Custom MGP",
                                        br(),
@@ -164,6 +157,18 @@ body <- dashboardBody(useShinyjs(),
                                            withSpinner(plotlyOutput("process_correlations", width = "95%"), type = 6, color = "#a6192e")),
                                        br(),
                                        tableOutput("recents")
+                              ),
+                              tabPanel("Mutant DB",
+                                       br(),
+                                       p("Here we provide our mutant database in full for you to explore before selecting options to make comparisons with."),
+                                       br(),
+                                       box(title = tags$b("Mutant DB"),
+                                           status = "warning",
+                                           solidHeader = F,
+                                           width = 12,
+                                           collapsed = T,
+                                           collapsible = T,
+                                           dataTableOutput("mutantdb"))
                               ),
                               tabPanel("About this app",
                                        br(),
@@ -370,7 +375,9 @@ server <- function(input, output){
   #mutant db
   output$mutantdb <- renderDataTable({
     mutant.db[,2:10]
-  })
+  }, options = list(
+    autoWidth = FALSE, scrollX = TRUE #prevents overflow of datatable out of box
+  ))
 
   
   # #custom MGP gene list code####
@@ -534,8 +541,9 @@ server <- function(input, output){
                                  mutant.cor <- cor(as.numeric(phenos$pheno_loadings), as.numeric(manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == tmp.mutant))))$coef[2,]))
                                  # cor(as.numeric(phenos$pheno1 - phenos$pheno2), manova(two.d.array(mutant.comparison()[[3]]) ~ c(rep(0, nrow(Y)), rep(1, sum(mutant.db$Genotype == tmp.mutant))))$coef[2,])
                                  print(mutant.cor)
-                                 return(paste0("Correlation between ", paste(first.title, collapse = ", ", sep = ", "), " and ", tmp.mutant, " mutant: ", round(my.cor, digits = 3)))
-                                 }
+                                 
+                                 return(paste0("Correlation between ", paste(first.title, collapse = ", ", sep = ", "), " and ", tmp.mutant, " mutant: ", round(mutant.cor, digits = 3)))
+                               }
                               )
         print(my.cor)
         my.title <- my.cor
