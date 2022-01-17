@@ -4,12 +4,12 @@ library(ggplot2)
 
 genelist <- c("Shh, Hhat, Disp1, Disp2, Ptch1, Ptch2, Gas1, Gas2, Gas3, Gli1, Gli2, Lrp2, HhrpGli2,  Gpc3, Gli3, Smo, Cdon")
 
-raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api", "/custom_mgp"),
+raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api/MGP", "/custom_mgp"),
                            query = list(genelist = genelist),
                            encode = "json")
 
 
-# raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api", "/mgp"),
+# raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api/MGP", "/mgp"),
 #                          query = list(GO.term = "chondrocyte differentiation", lambda = .075),
 #                          encode = "json")
 
@@ -134,5 +134,31 @@ ggplot() +
         axis.title = element_text(size = 12, face = "bold"),
         legend.text = element_text(size = 8),
         legend.title = element_text(size = 8, face = "bold", hjust = .5))
+
+#MGP analysis with permutation test####
+#just set the permutation argument to the number of permutations you want to do. Here I've set it to 5 just to illustrate the functionality.
+genelist <- c("Shh, Hhat, Disp1, Disp2, Ptch1, Ptch2, Gas1, Gas2, Gas3, Gli1, Gli2, Lrp2, HhrpGli2,  Gpc3, Gli3, Smo, Cdon")
+
+raw_api_res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api/MGP", "/custom_mgp"),
+                         query = list(genelist = genelist, permutation = 5),
+                         encode = "json")
+
+MGP_result <- jsonlite::fromJSON(httr::content(raw_api_res, "text"))
+
+#p = # R2 > true R2 / # permutations
+MGP_result$p_value
+
+#Comparing an MGP vector to a mutant
+#look at the list of available mutants
+mutant.list <- jsonlite::fromJSON(httr::content(httr::GET(url = paste0("https://genopheno.ucalgary.ca/api/MGP", "/mutant_list"), encode = "json"), "text"))
+mutant.list
+
+MGP_pheno_loadings <- paste(MGP_result$pheno_loadings, collapse = ", ")
+mutant <- "Bmp2"
+
+res <- httr::GET(url = paste0("https://genopheno.ucalgary.ca/api/MGP", "/mutant_comparison"),
+                 query = list(MGP_pheno_loadings = MGP_pheno_loadings, mutant = mutant))
+
+cat(httr::content(res))
 
 
