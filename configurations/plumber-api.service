@@ -4,7 +4,7 @@ Description=Plumber API
 # (or mariadb, mysql, etc if you use a DB with Plumber, otherwise leave this commented)
 
 [Service]
-ExecStart=/usr/bin/Rscript -e "library(plumber); pr() %>% pr_mount('/MGP', plumb('/home/jose.aponte/shiny/MGP/MGP_API/plumber.R')) %>% pr_run(port=3636, host='0.0.0.0')"
+ExecStart=/usr/bin/Rscript -e "library(plumber); pr() %>% pr_mount('/MGP', plumb('/home/jose.aponte/shiny/MGP/MGP_API/plumber.R')) %>% pr_mount('/Gestalt', plumb('/home/jose.aponte/shiny/Syndrome_model/plumber.R')) %>% pr_run(port=3636, host='0.0.0.0')"
 Restart=on-abnormal
 WorkingDirectory=/data/MGP_data/
 
