@@ -19,7 +19,7 @@ mmusculusEnsembl <- loadDb(file="~/shiny/shinyapps/MGP/ensemble.sqlite")
 load("~/shiny/shinyapps/MGP/shiny_data.Rdata")
 load("~/shiny/shinyapps/MGP/cached.results.Rdata")
 DO_probs_DB <- src_sqlite("~/shiny/shinyapps/MGP/MGP_genotypes.sqlite")
-
+do.mean.flat <- colMeans(Y)
 #docker dirs
 # setwd("/srv/shiny-server/")
 # mmusculusEnsembl <- loadDb(file="ensemble.sqlite")
@@ -98,20 +98,39 @@ mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06
   }
   
   approximate.p <- NULL
+  perm.r2 <- NULL
+  perm.pdist <- NULL
+  perm.pdist.mean <- NULL
   if(permutation > 0){
     perm.result <- rep(NA, permutation)
-    for(i in 1:length(perm.result)){
-    process.svd <- mddsPLS(Xs = probs.rows, Y = as.matrix(Y[sample(1:nrow(Y), size = nrow(Y)),]), R = pls_axis, lambda = lambda)
+    perm.pdist <- rep(NA, permutation)
+    min.score <- which.min(pls.svd$mod$ts[[1]][,1])
+    max.score <- which.max(pls.svd$mod$ts[[1]][,1])
+    MGP.shape <- predict(pls.svd, probs.rows[c(min.score, max.score),])$y[1,]
     
-    full.pred <- predict(process.svd, probs.rows)$y
-    ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
-    rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
-    perm.result[i] <- ess/(rss + ess)
+    for(i in 1:length(perm.result)){
+      process.svd <- mddsPLS(Xs = probs.rows, Y = as.matrix(Y[sample(1:nrow(Y), size = nrow(Y)),]), R = pls_axis, lambda = lambda)
+      
+      #R2
+      full.pred <- predict(process.svd, probs.rows)$y
+      ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
+      rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+      perm.result[i] <- ess/(rss + ess)
+      
+      #Pdist
+      min.score <- which.min(process.svd$mod$ts[[1]][,1])
+      max.score <- which.max(process.svd$mod$ts[[1]][,1])
+      #might have problems with random axis flipping
+      tmp.shape <- predict(process.svd, probs.rows[c(min.score, max.score),])$y[1,]
+      perm.pdist[i] <- sum(sqrt((tmp.shape - MGP.shape)^2))
+      #perm pdist from do mean shape
+      perm.pdist.mean[i] <- sum(sqrt((tmp.shape - do.mean.flat)^2))
     }
     
     full.pred <- predict(pls.svd, probs.rows)$y
     ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
     rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+    perm.r2 <- c(ess/(rss + ess), perm.result)
     approximate.p <- sum(ess/(rss + ess) < perm.result)/length(perm.result)
   }
   
@@ -146,7 +165,7 @@ mgp <- function(GO.term = "chondrocyte differentiation", Y, cv = F, lambda = .06
   proj.coords.a2 <- proj.coords.a1[,,2]
   proj.coords.a1 <- proj.coords.a1[,,1]
 
-  return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis], p_value = approximate.p))
+  return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis], p_value = approximate.p, perm_r2 = perm.r2, perm_pdist = perm.pdist, perm_pdist_mean = perm.pdist.mean))
 }
 
 #custom MGP function####
@@ -195,23 +214,41 @@ custom.mgp <- function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), Y, cv = F, lam
     pls.svd <- mddsPLS(Xs = probs.rows, Y = Y, R = pls_axis, lambda = lambda)
     
     approximate.p <- NULL
+    perm.r2 <- NULL
+    perm.pdist <- NULL
+    perm.pdist.mean <- NULL
     if(permutation > 0){
       perm.result <- rep(NA, permutation)
+      perm.pdist <- rep(NA, permutation)
+      min.score <- which.min(pls.svd$mod$ts[[1]][,1])
+      max.score <- which.max(pls.svd$mod$ts[[1]][,1])
+      MGP.shape <- predict(pls.svd, probs.rows[c(min.score, max.score),])$y[1,]
+      
       for(i in 1:length(perm.result)){
         process.svd <- mddsPLS(Xs = probs.rows, Y = as.matrix(Y[sample(1:nrow(Y), size = nrow(Y)),]), R = pls_axis, lambda = lambda)
         
+        #R2
         full.pred <- predict(process.svd, probs.rows)$y
         ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
         rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
         perm.result[i] <- ess/(rss + ess)
+        
+        #Pdist
+        min.score <- which.min(process.svd$mod$ts[[1]][,1])
+        max.score <- which.max(process.svd$mod$ts[[1]][,1])
+        #might have problems with random axis flipping
+        tmp.shape <- predict(process.svd, probs.rows[c(min.score, max.score),])$y[1,]
+        perm.pdist[i] <- sum(sqrt((tmp.shape - MGP.shape)^2))
+        #perm pdist from do mean shape
+        perm.pdist.mean[i] <- sum(sqrt((tmp.shape - do.mean.flat)^2))
       }
       
       full.pred <- predict(pls.svd, probs.rows)$y
       ess <- sum(apply(full.pred, 1, function(x) (x - colMeans(Y))^2))
       rss <- sum(apply(Y, 1, function(x) (x - colMeans(full.pred))^2))
+      perm.r2 <- c(ess/(rss + ess), perm.result)
       approximate.p <- sum(ess/(rss + ess) < perm.result)/length(perm.result)
     }
-    
     
     results <- list(pls.svd, gene.names, seq.info, probs.rows)
     
@@ -243,7 +280,7 @@ custom.mgp <- function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), Y, cv = F, lam
     proj.coords.a2 <- proj.coords.a1[,,2]
     proj.coords.a1 <- proj.coords.a1[,,1]
     
-    return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis], p_value = approximate.p))
+    return(list(loadings = pathway.loadings, pheno1 = proj.coords.a1, pheno2 = proj.coords.a2, pheno_loadings = pls.svd$mod$V_super[,pls_axis], p_value = approximate.p, perm_r2 = perm.r2, perm_pdist = perm.pdist, perm_pdist_mean = perm.pdist.mean))
 }
 
 #set CORS parameters####
@@ -268,7 +305,7 @@ cors <- function(res) {
 #* @get /mgp
 
 function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1, pheno = "Y", pheno_index = "1:54", permutation = 0) {
-  future::future({
+  # future::future({
     print(GO.term)
     
     GO.term <- strsplit(GO.term, split = ",")[[1]]
@@ -278,7 +315,7 @@ function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1, ph
     
     mgp(GO.term = GO.term, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis), permutation = permutation)
     
-  })
+  # })
 }
 
 #* Run a custom MGP model
@@ -291,14 +328,14 @@ function(GO.term = "chondrocyte differentiation", lambda = .06, pls_axis = 1, ph
 
 
 function(genelist = c("Bmp7, Bmp2, Bmp4, Ankrd11"), lambda = .06, pls_axis = 1,  pheno = "Y", pheno_index = "1:54", permutation = 0) {
-  future::future({
+  # future::future({
     
     coordinate.table <- matrix(1:(54 * 3), ncol = 3, byrow = T)
     selected.pheno <- eval(parse(text = pheno_index))
     pheno.xyz <- as.numeric(t(coordinate.table[selected.pheno,]))
     
     custom.mgp(genelist = genelist, lambda = as.numeric(lambda), Y = subset(get(pheno), select = pheno.xyz), pls_axis = as.numeric(pls_axis), permutation = permutation)
-  })
+  # })
 
 }
 
